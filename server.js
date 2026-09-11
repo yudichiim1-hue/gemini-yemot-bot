@@ -11,27 +11,29 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // זיכרון זמני לשמירת התשובות
 const responses = {};
 
-// שלוחה 1: מקבלת את קובץ ההקלטה משלוחת record
+// שלוחה 1: מקבלת את קובץ ההקלטה משלוחת ההקלטה
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     console.log("Audio request params:", params);
 
     const callId = params.ApiCallId;
-    const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path;
+    // חיפוש נתיב השמע בכל הפרמטרים האפשריים מימות המשיח
+    const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.recording_url;
 
     if (!voiceFileUrl) {
+      console.log("No audio file found in request params");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send("go_to_folder=/2");
     }
 
-    console.log("Processing audio file:", voiceFileUrl);
+    console.log("Processing audio file from URL:", voiceFileUrl);
 
-    // הורדת קובץ השמע
+    // הורדת קובץ השמע מהשרת של ימות המשיח
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // עיבוד ב-Gemini
+    // שליחה ל-Gemini Flash 2.5
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -52,17 +54,18 @@ app.all("/process-audio", async (req, res) => {
       ]
     });
 
-    // שמירת התשובה בזיכרון
+    // שמירת התשובה בזיכרון לפי מזהה השיחה
     responses[callId] = geminiResponse.text.replace(/["'\n\r&]/g, " ");
+    console.log(`Saved response for call ${callId}:`, responses[callId]);
 
-    // העברה לשלוחה 2 להשמעה
+    // העברה מיידית לשלוחה 2 להשמעה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send("go_to_folder=/2");
 
   } catch (error) {
     console.error("Error processing audio:", error);
     const callId = req.query.ApiCallId || req.body.ApiCallId;
-    responses[callId] = "חלה שגיאה בעיבוד ההודעה אנא נסה שנית";
+    responses[callId] = "חלה שגיאה בעיבוד ההודעה, אנא נסה שנית";
     
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send("go_to_folder=/2");
