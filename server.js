@@ -15,11 +15,11 @@ app.all("/process-audio", async (req, res) => {
 
     const token = params.token || "WU1BUElL.apik_EaMppLHizXHkDRaJ16lEXg.TMjXFOQtCfDQyDtbePpTz2qHJrNuBwcqtTRKvTNNsbw";
     
-    // ימות המשיח שולחת את נתיב ההקלטה בפרמטר val_1 או file
+    // ימות המשיח מעבירה ב-api_type=record את נתיב הקובץ ב-val_1
     let filePath = params.val_1 || params.file || params.path;
 
     if (!filePath) {
-      console.log("No audio file path received in val_1.");
+      console.log("No audio file path received.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send("id_list_message=t-לא התקבל קובץ הקלטה אנא נסה שנית&go_to_folder=/1");
     }
@@ -30,7 +30,7 @@ app.all("/process-audio", async (req, res) => {
     const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // שליחה ל-Gemini 2.5 Flash
+    // שליחה ל-Gemini Flash 2.5
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -53,7 +53,7 @@ app.all("/process-audio", async (req, res) => {
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // השמעת התשובה וחזרה לתחילת שלוחה 1 להקלטה הבאה
+    // השמעת התשובה וחזרה לשלוחה 1 להקלטה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 
