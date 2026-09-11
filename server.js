@@ -13,24 +13,22 @@ app.all("/process-audio", async (req, res) => {
     const params = { ...req.query, ...req.body };
     console.log("Incoming call params:", params);
 
-    // איתור קובץ השמע מכל הפרמטרים האפשריים
-    let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url || params.last_file;
+    let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url;
 
+    // במידה ולא התקבל נתיב ישיר, בונים את נתיב הקובץ מתוך שלוחה 2 לפי מזהה השיחה
     if (!voiceFileUrl || voiceFileUrl === "yes") {
-      console.log("No explicit file URL, attempting to retrieve default call recording...");
-      // במידה ולא התקבל נתיב ישיר, משתמשים במזהה השיחה לאיתור הקובץ האחרון שנשמר בשלוחה 2
       if (params.ApiCallId) {
-        voiceFileUrl = `ivar2:/2/${params.ApiCallId}.wav`;
+        voiceFileUrl = `ivr2:/2/${params.ApiCallId}.wav`;
       }
     }
 
     if (!voiceFileUrl) {
-      console.log("No file URL found in request parameters.");
+      console.log("No file URL found.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send("id_list_message=t-לא התקבל קובץ הקלטה אנא נסה שנית&go_to_folder=/1");
     }
 
-    // במידה והקישור יחסי, בונים קישור ההורדה מלא של ימות המשיח
+    // בניית הקישור המלא להורדה כולל ה-token
     if (!voiceFileUrl.startsWith("http")) {
       const systemToken = params.token || "";
       voiceFileUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${systemToken}&path=${voiceFileUrl}`;
@@ -65,7 +63,7 @@ app.all("/process-audio", async (req, res) => {
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // השמעת התשובה והחזרה לשלוחה 1
+    // השמעת התשובה והחזרה אוטומטית לשלוחה 1
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 
