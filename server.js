@@ -13,18 +13,22 @@ app.all("/", async (req, res) => {
     const params = { ...req.query, ...req.body };
     console.log("Incoming request params:", params);
 
-    // ניתוק שיחה - החזרת תגובה ריקה
+    // ניתוק שיחה
     if (params.hangup === "yes") {
-      res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("");
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      return res.end("");
     }
 
     const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.ApiVoiceFileName;
 
-    // כניסה ראשונית לשלוחה: השמעת הודעה + הפעלת הקלטה
+    // כניסה ראשונית לשלוחה
     if (!voiceFileUrl) {
-      res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("id_list_message=t-שלום במה אוכל לעזור לך&read_mode=record&read_max=120&read_time_out=3&val_name=val_1");
+      const responseText = "id_list_message=t-שלום במה אוכל לעזור לך&read_mode=record&read_max=120&read_time_out=3&val_name=val_1";
+      res.writeHead(200, { 
+        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Length": Buffer.byteLength(responseText)
+      });
+      return res.end(responseText);
     }
 
     // קבלת קובץ השמע ועיבוד ב-Gemini
@@ -52,14 +56,22 @@ app.all("/", async (req, res) => {
     });
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
+    const responseText = `id_list_message=t-${replyText}&read_mode=record&read_max=120&read_time_out=3&val_name=val_1`;
 
-    res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${replyText}&read_mode=record&read_max=120&read_time_out=3&val_name=val_1`);
+    res.writeHead(200, { 
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Length": Buffer.byteLength(responseText)
+    });
+    return res.end(responseText);
 
   } catch (error) {
     console.error("Error processing request:", error);
-    res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("id_list_message=t-חלה שגיאה אנא נסה שוב&read_mode=record&read_max=120&read_time_out=3&val_name=val_1");
+    const errorText = "id_list_message=t-חלה שגיאה אנא נסה שוב&read_mode=record&read_max=120&read_time_out=3&val_name=val_1";
+    res.writeHead(200, { 
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Length": Buffer.byteLength(errorText)
+    });
+    return res.end(errorText);
   }
 });
 
