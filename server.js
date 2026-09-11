@@ -8,27 +8,32 @@ app.use(express.json());
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// זיכרון זמני לשמירת התשובות
 const responses = {};
 
+// שלוחה 1: מקבלת את קובץ ההקלטה שנשלח משלוחת ה-recording
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     console.log("Audio request params:", params);
 
     const callId = params.ApiCallId;
-    const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.file || params.path;
+    // איתור נתיב קובץ השמע מתוך פרמטרי ימות המשיח
+    const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.recording_url;
 
-    // הפעלת הקלטה קולית יציבה עם הגדרת שניות מדויקת (120 שניות מקסימום, 2 שניות שתיקה בסוף)
     if (!voiceFileUrl) {
+      console.log("No voice file URL received.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,120,2,s,no,yes,no");
+      return res.send("go_to_folder=/2");
     }
 
-    console.log("Processing audio file:", voiceFileUrl);
+    console.log("Processing audio file URL:", voiceFileUrl);
 
+    // הורדת קובץ השמע
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
+    // שליחה לעיבוד ב-Gemini Flash 2.5
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -49,8 +54,10 @@ app.all("/process-audio", async (req, res) => {
       ]
     });
 
+    // שמירת התשובה בזיכרון
     responses[callId] = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
+    // העברה מיידית לשלוחה 2
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send("go_to_folder=/2");
 
@@ -64,6 +71,7 @@ app.all("/process-audio", async (req, res) => {
   }
 });
 
+// שלוחה 2: מקריאה את התשובה ומחזירה לשלוחה 1
 app.all("/get-response", (req, res) => {
   const params = { ...req.query, ...req.body };
   const callId = params.ApiCallId;
