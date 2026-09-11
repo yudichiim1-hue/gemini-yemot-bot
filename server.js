@@ -13,20 +13,27 @@ app.all("/process-audio", async (req, res) => {
     const params = { ...req.query, ...req.body };
     console.log("Incoming call params:", params);
 
-    // איתור קובץ השמע שהוקלט בשלוחה 1
-    const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.recording_url;
+    // איתור נתיב קובץ ההקלטה מכל הפרמטרים האפשריים של ימות המשיח
+    let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url;
 
     if (!voiceFileUrl) {
+      console.log("No file URL found in request parameters.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("id_list_message=t-לא התקבלה הקלטה אנא נסה שנית&go_to_folder=/1");
+      return res.send("id_list_message=t-לא התקבל קובץ הקלטה אנא נסה שנית&go_to_folder=/1");
     }
 
-    console.log("Processing voice file:", voiceFileUrl);
+    // אם הנתיב חלקי, הוספת הקידומת של שרת ההקלטות של ימות המשיח
+    if (!voiceFileUrl.startsWith("http")) {
+      voiceFileUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${params.token || ''}&path=${voiceFileUrl}`;
+    }
 
-    // הורדת השמע ועיבוד ב-Gemini
+    console.log("Downloading audio from:", voiceFileUrl);
+
+    // הורדת קובץ השמע
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
+    // שליחה ל-Gemini
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -49,7 +56,7 @@ app.all("/process-audio", async (req, res) => {
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // השמעת התשובה והחזרה אוטומטית לשלוחה 1
+    // השמעת התשובה והחזרה לשלוחה 1
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 
