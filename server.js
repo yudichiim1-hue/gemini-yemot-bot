@@ -11,26 +11,38 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    console.log("Incoming params from Yemot:", params);
+    console.log("Incoming call params:", params);
 
     const token = params.token || "WU1BUElL.apik_EaMppLHizXHkDRaJ16lEXg.TMjXFOQtCfDQyDtbePpTz2qHJrNuBwcqtTRKvTNNsbw";
     
-    // ימות המשיח מעבירה ב-api_type=record את נתיב הקובץ ב-val_1
-    let filePath = params.val_1 || params.file || params.path;
+    // ניסיון לחלץ את שם הקובץ/השיחה
+    let fileName = params.val_1 || params.file || params.recorded_file || params.path;
 
-    if (!filePath) {
-      console.log("No audio file path received.");
+    // אם ימות המשיח לא שלחה שם קובץ מפורש, השם של ההקלטה הוא ה-ApiCallId
+    if (!fileName && params.ApiCallId) {
+      fileName = `${params.ApiCallId}.wav`;
+    }
+
+    if (!fileName) {
+      console.log("No file parameter or ApiCallId received.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send("id_list_message=t-לא התקבל קובץ הקלטה אנא נסה שנית&go_to_folder=/1");
     }
 
-    const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
-    console.log("Downloading audio from:", downloadUrl);
+    if (!fileName.endsWith(".wav")) {
+      fileName += ".wav";
+    }
 
-    const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer" });
+    // הקובץ נשמר בתוך שלוחה 1 (ivr2:/1/filename.wav)
+    const filePath = fileName.startsWith("ivr2:") ? fileName : `ivr2:/1/${fileName}`;
+    const fileUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
+
+    console.log("Downloading recorded file from:", fileUrl);
+
+    const audioResponse = await axios.get(fileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // שליחה ל-Gemini Flash 2.5
+    // שליחה ל-Gemini
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -53,12 +65,11 @@ app.all("/process-audio", async (req, res) => {
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // השמעת התשובה וחזרה לשלוחה 1 להקלטה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 
   } catch (error) {
-    console.error("Error processing audio request:", error);
+    console.error("Error processing request:", error);
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send("id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1");
   }
