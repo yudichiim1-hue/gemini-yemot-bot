@@ -20,11 +20,11 @@ app.all("/process-audio", async (req, res) => {
     const callId = params.ApiCallId;
     const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.file;
 
-    // כניסה ראשונית: השמעת הודעה + הפעלת הקלטה קולית מוגדרת היטב
+    // כניסה ראשונית: השמעת הודעה + הפעלת הקלטה קולית בפורמט תקני של ימות המשיח
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      // הפרמטרים: הודעה, שם המשתנה, סוג (voice), שתיקה בשניות (2), מקסימום שניות (120), מינימום שניות (1), חיתוך בסולמית (yes)
-      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,2,120,1,no,yes,yes");
+      // הפורמט: read=t-הודעה=val_1,tap,2,120,1,no,yes,no
+      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,tap,2,120,1,no,yes,no");
     }
 
     console.log("Processing audio file:", voiceFileUrl);
