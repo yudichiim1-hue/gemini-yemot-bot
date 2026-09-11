@@ -13,24 +13,25 @@ app.all("/", async (req, res) => {
     const params = { ...req.query, ...req.body };
     console.log("Incoming request params:", params);
 
-    // טיפול בניתוק שיחה
     if (params.hangup === "yes") {
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send("");
     }
 
+    // ימות המשיח מעבירה את נתיב הקובץ ב-val_1 כשמסיימים להקליט
     const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.ApiVoiceFileName;
 
-    // כניסה ראשונית לשלוחה: משמיע הודעה + ממתין להקלטת קול עד שתיקה של 3 שניות
+    // כניסה ראשונית: השמעת הודעה + הקלטה קולית שמסתיימת זהה בשתיקה של 2 שניות
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,3,7,120,s,no,no,yes");
+      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,2,7,120,s,no,no,yes");
     }
 
-    // קבלת ההקלטה ועיבודה ב-Gemini
+    // הורדת קובץ הקול שבימות המשיח הקליטה
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
+    // שליחה ל-Gemini Flash 2.5
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -54,13 +55,13 @@ app.all("/", async (req, res) => {
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    // השמעת תשובת Gemini ופתיחת המיקרופון מחדש לשאלה הבאה
-    return res.send(`read=t-${replyText}=val_1,voice,3,7,120,s,no,no,yes`);
+    // השמעת התשובה מ-Gemini ופתיחת מיקרופון מיידית לשאלה הבאה
+    return res.send(`read=t-${replyText}=val_1,voice,2,7,120,s,no,no,yes`);
 
   } catch (error) {
     console.error("Error processing request:", error);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("read=t-חלה שגיאה אנא נסה לומר זאת שוב=val_1,voice,3,7,120,s,no,no,yes");
+    return res.send("read=t-חלה שגיאה אנא נסה לומר זאת שוב=val_1,voice,2,7,120,s,no,no,yes");
   }
 });
 
