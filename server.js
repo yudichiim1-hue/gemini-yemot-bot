@@ -13,25 +13,21 @@ app.all("/", async (req, res) => {
     const params = { ...req.query, ...req.body };
     console.log("Incoming request params:", params);
 
-    // ניתוק שיחה
+    // טיפול בניתוק שיחה
     if (params.hangup === "yes") {
-      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-      return res.end("");
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send("");
     }
 
     const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.ApiVoiceFileName;
 
-    // כניסה ראשונית לשלוחה
+    // כניסה ראשונית לשלוחה: משמיע הודעה + ממתין להקלטת קול עד שתיקה של 3 שניות
     if (!voiceFileUrl) {
-      const responseText = "id_list_message=t-שלום במה אוכל לעזור לך&read_mode=record&read_max=120&read_time_out=3&val_name=val_1";
-      res.writeHead(200, { 
-        "Content-Type": "text/plain; charset=utf-8",
-        "Content-Length": Buffer.byteLength(responseText)
-      });
-      return res.end(responseText);
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,3,7,120,s,no,no,yes");
     }
 
-    // קבלת קובץ השמע ועיבוד ב-Gemini
+    // קבלת ההקלטה ועיבודה ב-Gemini
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
@@ -56,22 +52,15 @@ app.all("/", async (req, res) => {
     });
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
-    const responseText = `id_list_message=t-${replyText}&read_mode=record&read_max=120&read_time_out=3&val_name=val_1`;
 
-    res.writeHead(200, { 
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Length": Buffer.byteLength(responseText)
-    });
-    return res.end(responseText);
+    res.set("Content-Type", "text/plain; charset=utf-8");
+    // השמעת תשובת Gemini ופתיחת המיקרופון מחדש לשאלה הבאה
+    return res.send(`read=t-${replyText}=val_1,voice,3,7,120,s,no,no,yes`);
 
   } catch (error) {
     console.error("Error processing request:", error);
-    const errorText = "id_list_message=t-חלה שגיאה אנא נסה שוב&read_mode=record&read_max=120&read_time_out=3&val_name=val_1";
-    res.writeHead(200, { 
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Length": Buffer.byteLength(errorText)
-    });
-    return res.end(errorText);
+    res.set("Content-Type", "text/plain; charset=utf-8");
+    return res.send("read=t-חלה שגיאה אנא נסה לומר זאת שוב=val_1,voice,3,7,120,s,no,no,yes");
   }
 });
 
