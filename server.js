@@ -8,56 +8,29 @@ app.use(express.json());
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// פונקציית עזר להשהיה בין ניסיונות הורדה
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// פונקציה להורדת הקובץ עם ניסיונות חוזרים (מטפלת בדיליי כתיבה)
-async function downloadAudioWithRetry(url, retries = 3, delayMs = 1000) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await axios.get(url, { responseType: "arraybuffer" });
-      if (response.status === 200 && response.data.length > 0) {
-        return response.data;
-      }
-    } catch (err) {
-      console.log(`Download attempt ${i + 1} failed. Retrying in ${delayMs}ms...`);
-      if (i === retries - 1) throw err;
-      await sleep(delayMs);
-    }
-  }
-}
-
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    console.log("Incoming call params:", params);
+    console.log("Incoming params from Yemot:", params);
 
-    let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url;
+    const token = params.token || "WU1BUElL.apik_EaMppLHizXHkDRaJ16lEXg.TMjXFOQtCfDQyDtbePpTz2qHJrNuBwcqtTRKvTNNsbw";
+    
+    // ימות המשיח שולחת את נתיב ההקלטה בפרמטר val_1 או file
+    let filePath = params.val_1 || params.file || params.path;
 
-    if (!voiceFileUrl || voiceFileUrl === "yes") {
-      if (params.ApiCallId) {
-        voiceFileUrl = `ivr2:/2/${params.ApiCallId}.wav`;
-      }
-    }
-
-    if (!voiceFileUrl) {
-      console.log("No file URL found.");
+    if (!filePath) {
+      console.log("No audio file path received in val_1.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send("id_list_message=t-לא התקבל קובץ הקלטה אנא נסה שנית&go_to_folder=/1");
     }
 
-    if (!voiceFileUrl.startsWith("http")) {
-      const systemToken = params.token || "";
-      voiceFileUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${systemToken}&path=${voiceFileUrl}`;
-    }
+    const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
+    console.log("Downloading audio from:", downloadUrl);
 
-    console.log("Downloading audio from:", voiceFileUrl);
+    const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer" });
+    const audioBuffer = Buffer.from(audioResponse.data);
 
-    // הורדה עם 3 ניסיונות והשהיה של שנייה בין ניסיון לניסיון
-    const audioData = await downloadAudioWithRetry(voiceFileUrl, 3, 1000);
-    const audioBuffer = Buffer.from(audioData);
-
-    // שליחה ל-Gemini Flash 2.5
+    // שליחה ל-Gemini 2.5 Flash
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -80,12 +53,12 @@ app.all("/process-audio", async (req, res) => {
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // השמעת התשובה והחזרה אוטומטית לשלוחה 1
+    // השמעת התשובה וחזרה לתחילת שלוחה 1 להקלטה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 
   } catch (error) {
-    console.error("Error processing request:", error);
+    console.error("Error processing audio request:", error);
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send("id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1");
   }
