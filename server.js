@@ -11,23 +11,23 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 app.all("/", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    console.log("Received params:", params);
+    console.log("Incoming request params:", params);
 
-    // בדיקת הפרמטר של קובץ השמע מהקלטת המשתמש
-    const voiceFileUrl = params.ApiVoiceFile || params.ApiVoiceFileName || params.voice_file_path;
+    // ימות המשיח שולחת את הקובץ המוקלט בתוך פרמטרים אלו
+    const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.ApiVoiceFileName;
 
-    // 1. כניסה ראשונית - משמיע הודעה ומבקש מימות המשיח להקליט את המשתמש
+    // מקרה 1: כניסה ראשונית לשלוחה (אין עדיין הקלטה)
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      // id_list_message משמיע את ההודעה, וההגדרות הבאות מבצעות הקלטה עד שתיקה
-      return res.send("id_list_message=t-שלום, במה אוכל לעזור לך?&read_mode=record&read_max=120&read_time_out=3");
+      // משמיע הודעת שלום + פותח הקלטת קול (read) עד שתיקה של 3 שניות ומחזיר לשרת
+      return res.send("read=t-שלום, במה אוכל לעזור לך?=val_1,voice,3,7,120,s,no,no,yes");
     }
 
-    // 2. הורדת קובץ הקלטת השמע מימות המשיח
+    // מקרה 2: התקבל קובץ הקלטה מהמשתמש
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // 3. שליחה ל-Gemini
+    // פנייה ל-Gemini
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -41,24 +41,24 @@ app.all("/", async (req, res) => {
               }
             },
             {
-              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תווים מיוחדים."
+              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים."
             }
           ]
         }
       ]
     });
 
-    // 4. ניקוי הטקסט מהערות או תווים שבורים
+    // ניקוי תווים מיוחדים שיכולים לשבור את התשובה בימות המשיח
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // 5. השמעת התשובה למשתמש ופתיחת הקלטה חדשה לשאלה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${replyText}&read_mode=record&read_max=120&read_time_out=3`);
+    // משמיע את התשובה של Gemini + שוב פותח הקלטה לשאלה הבאה!
+    return res.send(`read=t-${replyText}=val_1,voice,3,7,120,s,no,no,yes`);
 
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error processing request:", error);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("id_list_message=t-חלה שגיאה, אנא נסה לומר זאת שוב.&read_mode=record&read_max=120&read_time_out=3");
+    return res.send("read=t-חלה שגיאה תקשורת, אנא נסה לומר זאת שוב.=val_1,voice,3,7,120,s,no,no,yes");
   }
 });
 
