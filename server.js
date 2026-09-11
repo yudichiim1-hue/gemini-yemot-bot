@@ -13,8 +13,13 @@ app.all("/process-audio", async (req, res) => {
     const params = { ...req.query, ...req.body };
     console.log("Incoming call params:", params);
 
-    // איתור נתיב קובץ ההקלטה מכל הפרמטרים האפשריים של ימות המשיח
+    // איתור קובץ השמע מכל הפרמטרים האפשריים
     let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url;
+
+    // במידה והתקבל רק שם הקובץ או נתיב יחסי
+    if (!voiceFileUrl && params.last_file) {
+      voiceFileUrl = params.last_file;
+    }
 
     if (!voiceFileUrl) {
       console.log("No file URL found in request parameters.");
@@ -22,9 +27,10 @@ app.all("/process-audio", async (req, res) => {
       return res.send("id_list_message=t-לא התקבל קובץ הקלטה אנא נסה שנית&go_to_folder=/1");
     }
 
-    // אם הנתיב חלקי, הוספת הקידומת של שרת ההקלטות של ימות המשיח
+    // במידה והקישור יחסי, בונים קישור ההורדה מלא של ימות המשיח
     if (!voiceFileUrl.startsWith("http")) {
-      voiceFileUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${params.token || ''}&path=${voiceFileUrl}`;
+      const systemToken = params.token || "";
+      voiceFileUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${systemToken}&path=${voiceFileUrl}`;
     }
 
     console.log("Downloading audio from:", voiceFileUrl);
@@ -33,7 +39,7 @@ app.all("/process-audio", async (req, res) => {
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // שליחה ל-Gemini
+    // שליחה ל-Gemini Flash 2.5
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
