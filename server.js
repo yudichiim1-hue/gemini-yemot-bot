@@ -8,10 +8,8 @@ app.use(express.json());
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// זיכרון זמני לשמירת התשובות
 const responses = {};
 
-// שלוחה 1: מקבלת פנייה, מפעילה הקלטה, מעבדת ומעבירה לשלוחה 2
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
@@ -20,20 +18,17 @@ app.all("/process-audio", async (req, res) => {
     const callId = params.ApiCallId;
     const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.file || params.path;
 
-    // כניסה ראשונית: הפעלת מנגנון ההקלטה הפנימי של ה-API
+    // הפעלת הקלטה קולית יציבה עם הגדרת שניות מדויקת (120 שניות מקסימום, 2 שניות שתיקה בסוף)
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      // מפעיל הקלטה עד סולמית או שתיקה ומחזיר את הנתיב ב-val_1
-      return res.send("record=t-שלום במה אוכל לעזור לך=val_1,2,120,1,no,yes");
+      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,120,2,s,no,yes,no");
     }
 
     console.log("Processing audio file:", voiceFileUrl);
 
-    // הורדת קובץ השמע
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // עיבוד ב-Gemini
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -54,10 +49,8 @@ app.all("/process-audio", async (req, res) => {
       ]
     });
 
-    // שמירת התשובה בזיכרון
     responses[callId] = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // מעבר אקטיבי לשלוחה 2
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send("go_to_folder=/2");
 
@@ -71,7 +64,6 @@ app.all("/process-audio", async (req, res) => {
   }
 });
 
-// שלוחה 2: מקריאה את התשובה ומחזירה לשלוחה 1
 app.all("/get-response", (req, res) => {
   const params = { ...req.query, ...req.body };
   const callId = params.ApiCallId;
