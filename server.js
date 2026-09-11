@@ -1,6 +1,6 @@
 const express = require("express");
 const axios = require("axios");
-const { GoogleGenAI } = require("@google/genai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
 
@@ -16,13 +16,19 @@ const handleAudioRequest = async (req, res) => {
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const primaryFolder = params.SHM || "2";
     const secondaryFolder = params.SHL || "1";
-    const modelName = params.MODEL || "gemini-2.5-flash";
+    const modelName = params.MODEL || "gemini-1.5-flash"; // דגם נתמך ויציב
     const apiKey = process.env.GEMINI_API_KEY || params.API || params.KEY2;
+
+    if (!apiKey) {
+      console.error("שגיאה: לא הוגדר GEMINI_API_KEY");
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(`id_list_message=t-מפתח ה-API של ג'מיני חסר&go_to_folder=/${secondaryFolder}`);
+    }
 
     let audioBuffer = null;
     const possiblePaths = [];
 
-    // 1. בדיקת פרמטרים ששיגרה ימות המשיח עבור api_000 והקלטות בלייב
+    // 1. זיהוי נתיב הקובץ שהועבר מימות המשיח
     if (params.path) possiblePaths.push(params.path);
     if (params.file) possiblePaths.push(params.file);
     if (params.filePath) possiblePaths.push(params.filePath);
@@ -34,9 +40,8 @@ const handleAudioRequest = async (req, res) => {
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`/Transcription/last.wav`);
 
-    // ניסיון הורדת השמע מכל הנתיבים
+    // ניסיון הורדת השמע
     for (let rawPath of possiblePaths) {
-      // נרמול נתיב מול ה-API של ימות המשיח
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
       
@@ -54,42 +59,34 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // אם לא נמצא שום קובץ שמע
     if (!audioBuffer) {
       console.error("לא נמצאה הקלטה באף נתיב שנבדק.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
     }
 
-    // 3. שליחה ל-Gemini
-    const ai = new GoogleGenAI({ apiKey: apiKey });
+    // 3. חיבור מתוקן ל-Gemini דרך GoogleGenerativeAI
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: modelName });
+
     console.log(`שולח ל-Gemini (${modelName})...`);
 
-    const geminiResponse = await ai.models.generateContent({
-      model: modelName,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              inlineData: {
-                mimeType: "audio/wav",
-                data: audioBuffer.toString("base64")
-              }
-            },
-            {
-              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תווים מיוחדים."
-            }
-          ]
+    const result = await model.generateContent([
+      "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תווים מיוחדים.",
+      {
+        inlineData: {
+          mimeType: "audio/wav",
+          data: audioBuffer.toString("base64")
         }
-      ]
-    });
+      }
+    ]);
 
-    const rawText = geminiResponse.text || "לא התקבלה תשובה";
+    const response = await result.response;
+    const rawText = response.text() || "לא התקבלה תשובה";
     const cleanText = rawText.replace(/["'\n\r&?=<>/]/g, " ").trim();
     console.log("תשובת Gemini:", cleanText);
 
-    // החזרת תשובה ומעבר לשלוחה הבאה
+    // החזרת תשובה קולית והעברת השיחה לשלוחה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`);
 
