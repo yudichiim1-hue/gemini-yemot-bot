@@ -11,20 +11,18 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // זיכרון זמני לשמירת התשובות
 const responses = {};
 
-// שלוחה 1: מקבלת פנייה, מפעילה הקלטה, ומעבירה לשלוחה 2 לאחר קבלת השמע
+// שלוחה 1: מקבלת את קובץ ההקלטה משלוחת record
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     console.log("Audio request params:", params);
 
     const callId = params.ApiCallId;
-    const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.file;
+    const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path;
 
-    // כניסה ראשונית: השמעת הודעה + הפעלת הקלטה קולית בפורמט תקני של ימות המשיח
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      // הפורמט: read=t-הודעה=val_1,tap,2,120,1,no,yes,no
-      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,tap,2,120,1,no,yes,no");
+      return res.send("go_to_folder=/2");
     }
 
     console.log("Processing audio file:", voiceFileUrl);
@@ -57,7 +55,7 @@ app.all("/process-audio", async (req, res) => {
     // שמירת התשובה בזיכרון
     responses[callId] = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // העברה מיידית לשלוחה 2
+    // העברה לשלוחה 2 להשמעה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send("go_to_folder=/2");
 
