@@ -11,20 +11,19 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // זיכרון זמני לשמירת התשובות
 const responses = {};
 
-// שלוחה 1: מקבלת את קובץ ההקלטה משלוחת ההקלטה
+// שלוחה 1: מקבלת את קובץ ההקלטה משלוחת record
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     console.log("Audio request params:", params);
 
     const callId = params.ApiCallId;
-    // חיפוש נתיב השמע בכל הפרמטרים האפשריים מימות המשיח
     const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.recording_url;
 
     if (!voiceFileUrl) {
       console.log("No audio file found in request params");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("go_to_folder=/2");
+      return res.send("");
     }
 
     console.log("Processing audio file from URL:", voiceFileUrl);
@@ -58,9 +57,8 @@ app.all("/process-audio", async (req, res) => {
     responses[callId] = geminiResponse.text.replace(/["'\n\r&]/g, " ");
     console.log(`Saved response for call ${callId}:`, responses[callId]);
 
-    // העברה מיידית לשלוחה 2 להשמעה
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("go_to_folder=/2");
+    return res.send("");
 
   } catch (error) {
     console.error("Error processing audio:", error);
@@ -68,7 +66,7 @@ app.all("/process-audio", async (req, res) => {
     responses[callId] = "חלה שגיאה בעיבוד ההודעה, אנא נסה שנית";
     
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("go_to_folder=/2");
+    return res.send("");
   }
 });
 
@@ -76,7 +74,7 @@ app.all("/process-audio", async (req, res) => {
 app.all("/get-response", (req, res) => {
   const params = { ...req.query, ...req.body };
   const callId = params.ApiCallId;
-  const replyText = responses[callId] || "לא התקבלה תשובה, אנא נסה שנית";
+  const replyText = responses[callId] || "עדיין מעבד את ההודעה, אנא המתן רגע ונסה שנית";
 
   delete responses[callId];
 
