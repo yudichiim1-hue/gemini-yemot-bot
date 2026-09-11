@@ -15,10 +15,10 @@ app.all("/process-audio", async (req, res) => {
 
     let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url;
 
-    // במידה ולא התקבל נתיב ישיר, בונים את נתיב הקובץ מתוך שלוחה 2 לפי מזהה השיחה
+    // במידה ולא התקבל נתיב מפורש, שולפים את ההקלטה משלוחה 1 לפי מזהה השיחה
     if (!voiceFileUrl || voiceFileUrl === "yes") {
       if (params.ApiCallId) {
-        voiceFileUrl = `ivr2:/2/${params.ApiCallId}.wav`;
+        voiceFileUrl = `ivr2:/1/${params.ApiCallId}.wav`;
       }
     }
 
