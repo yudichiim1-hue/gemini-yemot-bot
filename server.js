@@ -8,28 +8,31 @@ app.use(express.json());
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// זיכרון זמני לשמירת התשובות עבור כל שיחה
+// זיכרון זמני לשמירת התשובות
 const responses = {};
 
-// נתיב 1: מקבל את ההקלטה משלוחה 1, מעבד ב-Gemini ומעביר לשלוחה 2
+// שלוחה 1: מקבלת פנייה, מפעילה הקלטה, ומעבירה לשלוחה 2 לאחר קבלת השמע
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     console.log("Audio request params:", params);
 
     const callId = params.ApiCallId;
-    const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path;
+    const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.file;
 
+    // כניסה ראשונית: השמעת הודעה + הפעלת הקלטה
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("go_to_folder=/2");
+      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,2,7,120,s,no,no,yes");
     }
 
-    // הורדת השמע מההקלטה
+    console.log("Processing audio file:", voiceFileUrl);
+
+    // הורדת קובץ השמע
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // שליחה ל-Gemini
+    // עיבוד ב-Gemini
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -43,39 +46,39 @@ app.all("/process-audio", async (req, res) => {
               }
             },
             {
-              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תתווים מיוחדים."
+              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תווים מיוחדים."
             }
           ]
         }
       ]
     });
 
-    // שמירת התשובה בזיכרון לפי מזהה השיחה
+    // שמירת התשובה בזיכרון
     responses[callId] = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // העברה מיידית לשלוחה 2 להשמעה
+    // העברה מיידית לשלוחה 2
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send("go_to_folder=/2");
 
   } catch (error) {
     console.error("Error processing audio:", error);
+    const callId = req.query.ApiCallId || req.body.ApiCallId;
+    responses[callId] = "חלה שגיאה בעיבוד ההודעה אנא נסה שנית";
+    
     res.set("Content-Type", "text/plain; charset=utf-8");
-    responses[req.query.ApiCallId || req.body.ApiCallId] = "חלה שגיאה בעיבוד ההודעה";
     return res.send("go_to_folder=/2");
   }
 });
 
-// נתיב 2: שלוחה 2 פונה לכאן כדי לקבל ולהקריא את התשובה
+// שלוחה 2: מקריאה את התשובה ומחזירה לשלוחה 1
 app.all("/get-response", (req, res) => {
   const params = { ...req.query, ...req.body };
   const callId = params.ApiCallId;
   const replyText = responses[callId] || "לא התקבלה תשובה, אנא נסה שנית";
 
-  // מוחקים את התשובה מהזיכרון לאחר השימוש
   delete responses[callId];
 
   res.set("Content-Type", "text/plain; charset=utf-8");
-  // השמעת התשובה והעברה חזרה לשלוחה 1 להקלטה הבאה
   return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 });
 
