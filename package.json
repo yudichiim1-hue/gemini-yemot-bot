@@ -1,13 +1,17 @@
 {
   "name": "gemini-yemot-bot",
   "version": "1.0.0",
+  "description": "Integration between Yemot HaMashiach IVR and Google Gemini API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@google/genai": "latest",
+    "@google/generative-ai": "^0.21.0",
     "axios": "^1.6.8",
     "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
