@@ -11,7 +11,7 @@ const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     console.log("--- התקבלה קריאה חדשה ---");
-    console.log("פרמטרים:", params);
+    console.log("כל הפרמטרים מימות המשיח:", JSON.stringify(params, null, 2));
 
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const primaryFolder = params.SHM || "2";
@@ -20,46 +20,48 @@ const handleAudioRequest = async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY || params.API || params.KEY2;
 
     let audioBuffer = null;
-    let downloadedPath = "";
-
-    // רשימת נתיבים אפשריים לבדיקה
     const possiblePaths = [];
-    
-    // אם ימות המשיח שלחה נתיב ספציפי בפרמטר
-    if (params.path || params.file) {
-      possiblePaths.push(params.path || params.file);
-    }
-    
-    // נתיבי ברירת מחדל לפי השלוחות
+
+    // 1. בדיקת פרמטרים ששיגרה ימות המשיח עבור api_000 והקלטות בלייב
+    if (params.path) possiblePaths.push(params.path);
+    if (params.file) possiblePaths.push(params.file);
+    if (params.filePath) possiblePaths.push(params.filePath);
+    if (params.ApiPath) possiblePaths.push(params.ApiPath);
+    if (params.ApiFile) possiblePaths.push(params.ApiFile);
+
+    // 2. ברירות מחדל במידה ולא נשלח נתיב ישיר
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
+    possiblePaths.push(`/Transcription/last.wav`);
 
-    // ניסיון הורדה בלולאה מכל הנתיבים האפשריים
-    for (const filePath of possiblePaths) {
-      const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
-      console.log("מנסה להוריד קובץ מנתיב:", downloadUrl);
+    // ניסיון הורדת השמע מכל הנתיבים
+    for (let rawPath of possiblePaths) {
+      // נרמול נתיב מול ה-API של ימות המשיח
+      let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
+      const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
+      
+      console.log("מנסה להוריד מנתיב:", cleanPath);
 
       try {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer" });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          downloadedPath = filePath;
-          console.log(`הקובץ הורד בהצלחה מ-${filePath}! גודל: ${audioBuffer.length} bytes`);
+          console.log(`הקובץ הורד בהצלחה מ-${cleanPath}! גודל: ${audioBuffer.length} bytes`);
           break;
         }
       } catch (err) {
-        console.log(`קובץ לא נמצא בנתיב: ${filePath}`);
+        console.log(`לא נמצא קובץ בנתיב: ${cleanPath}`);
       }
     }
 
-    // אם לא נמצא קובץ באף נתיב
+    // אם לא נמצא שום קובץ שמע
     if (!audioBuffer) {
-      console.error("לא נמצאה הקלטה באף אחד מהנתיבים שנבדקו.");
+      console.error("לא נמצאה הקלטה באף נתיב שנבדק.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט את שאלתך ונסה שנית&go_to_folder=/${secondaryFolder}`);
+      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
     }
 
-    // פנייה ל-Gemini
+    // 3. שליחה ל-Gemini
     const ai = new GoogleGenAI({ apiKey: apiKey });
     console.log(`שולח ל-Gemini (${modelName})...`);
 
@@ -87,7 +89,7 @@ const handleAudioRequest = async (req, res) => {
     const cleanText = rawText.replace(/["'\n\r&?=<>/]/g, " ").trim();
     console.log("תשובת Gemini:", cleanText);
 
-    // החזרת תשובה קולית והעברת השיחה לשלוחה הבאה
+    // החזרת תשובה ומעבר לשלוחה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`);
 
