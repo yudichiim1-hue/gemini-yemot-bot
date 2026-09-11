@@ -14,11 +14,14 @@ app.all("/process-audio", async (req, res) => {
     console.log("Incoming call params:", params);
 
     // איתור קובץ השמע מכל הפרמטרים האפשריים
-    let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url;
+    let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url || params.last_file;
 
-    // במידה והתקבל רק שם הקובץ או נתיב יחסי
-    if (!voiceFileUrl && params.last_file) {
-      voiceFileUrl = params.last_file;
+    if (!voiceFileUrl || voiceFileUrl === "yes") {
+      console.log("No explicit file URL, attempting to retrieve default call recording...");
+      // במידה ולא התקבל נתיב ישיר, משתמשים במזהה השיחה לאיתור הקובץ האחרון שנשמר בשלוחה 2
+      if (params.ApiCallId) {
+        voiceFileUrl = `ivar2:/2/${params.ApiCallId}.wav`;
+      }
     }
 
     if (!voiceFileUrl) {
