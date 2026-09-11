@@ -8,32 +8,25 @@ app.use(express.json());
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// זיכרון זמני לשמירת התשובות
-const responses = {};
-
-// שלוחה 1: מקבלת את קובץ ההקלטה שנשלח משלוחת ה-recording
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    console.log("Audio request params:", params);
+    console.log("Incoming call params:", params);
 
-    const callId = params.ApiCallId;
-    // איתור נתיב קובץ השמע מתוך פרמטרי ימות המשיח
+    // איתור קובץ השמע שהוקלט בשלוחה 1
     const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.recording_url;
 
     if (!voiceFileUrl) {
-      console.log("No voice file URL received.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("go_to_folder=/2");
+      return res.send("id_list_message=t-לא התקבלה הקלטה אנא נסה שנית&go_to_folder=/1");
     }
 
-    console.log("Processing audio file URL:", voiceFileUrl);
+    console.log("Processing voice file:", voiceFileUrl);
 
-    // הורדת קובץ השמע
+    // הורדת השמע ועיבוד ב-Gemini
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // שליחה לעיבוד ב-Gemini Flash 2.5
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -54,33 +47,17 @@ app.all("/process-audio", async (req, res) => {
       ]
     });
 
-    // שמירת התשובה בזיכרון
-    responses[callId] = geminiResponse.text.replace(/["'\n\r&]/g, " ");
+    const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // העברה מיידית לשלוחה 2
+    // השמעת התשובה והחזרה אוטומטית לשלוחה 1
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("go_to_folder=/2");
+    return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 
   } catch (error) {
-    console.error("Error processing audio:", error);
-    const callId = req.query.ApiCallId || req.body.ApiCallId;
-    responses[callId] = "חלה שגיאה בעיבוד ההודעה אנא נסה שנית";
-    
+    console.error("Error processing request:", error);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("go_to_folder=/2");
+    return res.send("id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1");
   }
-});
-
-// שלוחה 2: מקריאה את התשובה ומחזירה לשלוחה 1
-app.all("/get-response", (req, res) => {
-  const params = { ...req.query, ...req.body };
-  const callId = params.ApiCallId;
-  const replyText = responses[callId] || "לא התקבלה תשובה, אנא נסה שנית";
-
-  delete responses[callId];
-
-  res.set("Content-Type", "text/plain; charset=utf-8");
-  return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 });
 
 const PORT = process.env.PORT || 10000;
