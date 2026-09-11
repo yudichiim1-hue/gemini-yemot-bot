@@ -4,8 +4,6 @@ const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 
-// מקבל שמע גולמי שנשלח בימות המשיח דרך api_000
-app.use(express.raw({ type: "*/*", limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
@@ -15,7 +13,7 @@ app.all("/process-audio", async (req, res) => {
     console.log("--- התקבלה קריאה חדשה ---");
     console.log("פרמטרים:", params);
 
-    const token = params.token || params.TOKEN;
+    const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const questionsFolder = params.SHM || "2";
     const nextFolder = params.SHL || "1";
     const modelName = params.MODEL || "gemini-2.5-flash";
@@ -23,30 +21,23 @@ app.all("/process-audio", async (req, res) => {
 
     let audioBuffer = null;
 
-    // 1. בדיקה אם השמע הגיע בלייב בגוף הבקשה (api_000)
-    if (Buffer.isBuffer(req.body) && req.body.length > 0) {
-      console.log(`התקבל קובץ שמע בלייב בגודל: ${req.body.length} bytes`);
-      audioBuffer = req.body;
-    } 
-    // 2. אם לא הגיע ב-Body, מנסים להוריד לפי ה-Token והשלוחה
-    else if (token) {
-      const filePath = `ivr2:/${questionsFolder}/last.wav`;
-      const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
-      console.log("מוריד קובץ מנתיב:", downloadUrl);
-      
-      try {
-        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer" });
-        audioBuffer = Buffer.from(audioResponse.data);
-      } catch (dlError) {
-        console.error("לא נמצא קובץ בנתיב:", dlError.message);
-      }
+    // הורדת הקובץ last.wav משלוחת השאלות
+    const filePath = `ivr2:/${questionsFolder}/last.wav`;
+    const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
+    console.log("מנסה להוריד קובץ מנתיב:", downloadUrl);
+
+    try {
+      const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer" });
+      audioBuffer = Buffer.from(audioResponse.data);
+      console.log(`הקובץ הורד בהצלחה! גודל: ${audioBuffer.length} bytes`);
+    } catch (dlError) {
+      console.error("שגיאה בהורדת הקובץ:", dlError.message);
+      // במקרה של כישלון בהורדה, החזרת תשובה תקינה לימות המשיח כדי למנוע הודעת שגיאה במערכת
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה&go_to_folder=/${nextFolder}`);
     }
 
-    if (!audioBuffer || audioBuffer.length === 0) {
-      throw new Error("NoAudioData");
-    }
-
-    // 3. פנייה ל-Gemini
+    // פנייה ל-Gemini
     const ai = new GoogleGenAI({ apiKey: apiKey });
     console.log(`שולח ל-Gemini (${modelName})...`);
 
@@ -74,13 +65,13 @@ app.all("/process-audio", async (req, res) => {
     const cleanText = rawText.replace(/["'\n\r&?=<>/]/g, " ").trim();
     console.log("תשובת Gemini:", cleanText);
 
-    // 4. החזרת תשובה בפורמט ימות המשיח ומעבר לשלוחה הבאה
+    // החזרת התשובה בפורמט ימות המשיח
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${nextFolder}`);
 
   } catch (error) {
-    console.error("שגיאה בעיבוד:", error.message);
-    const fallbackFolder = req.query.SHL || req.body.SHL || "2";
+    console.error("שגיאה כללית בעיבוד:", error.message);
+    const fallbackFolder = req.query.SHL || req.body.SHL || "1";
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/${fallbackFolder}`);
   }
