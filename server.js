@@ -14,9 +14,11 @@ app.all("/process-audio", async (req, res) => {
     console.log("Incoming params:", params);
 
     const token = params.token || "WU1BUElL.apik_EaMppLHizXHkDRaJ16lEXg.TMjXFOQtCfDQyDtbePpTz2qHJrNuBwcqtTRKvTNNsbw";
-    
-    // הקובץ נשמר בשלוחה 1 בשם last.wav
-    const filePath = "ivr2:/1/last.wav";
+    const questionsFolder = params.SHM || "2"; // שלוחת השאלות (ברירת מחדל: 2)
+    const answersFolder = params.SHL || "1";   // שלוחת התשובות (ברירת מחדל: 1)
+
+    // הורדת קובץ ההקלטה שנשמר בשלוחת השאלות בשם last.wav
+    const filePath = `ivr2:/${questionsFolder}/last.wav`;
     const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
 
     console.log("Downloading audio from:", downloadUrl);
@@ -47,13 +49,14 @@ app.all("/process-audio", async (req, res) => {
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
+    // הקראת התשובה וחזרה לשלוחת השאלות (שלוחה 2) להקלטה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
+    return res.send(`id_list_message=t-${replyText}&go_to_folder=/${questionsFolder}`);
 
   } catch (error) {
     console.error("Error processing request:", error);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1");
+    return res.send("id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/2");
   }
 });
 
