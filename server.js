@@ -13,21 +13,21 @@ app.all("/", async (req, res) => {
     const params = { ...req.query, ...req.body };
     console.log("Incoming request params:", params);
 
-    // ימות המשיח מעבירה את נתיב קובץ ההקלטה בפרמטר val_1
-    const voiceFileUrl = params.val_1;
+    // ימות המשיח שולחת את הקובץ המוקלט בתוך פרמטרים אלו
+    const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.ApiVoiceFileName;
 
-    // מקרה 1: כניסה ראשונית - הגדרת הקלטת קול (read)
+    // מקרה 1: כניסה ראשונית לשלוחה (אין עדיין הקלטה)
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      // הפורמט המדויק להפעלת רכיב ההקלטה הקולי של ימות המשיח
-      return res.send("read_mode=record&read_max=120&read_time_out=3&id_list_message=t-שלום במה אוכל לעזור לך&val_name=val_1");
+      // משמיע הודעת שלום + פותח הקלטת קול (read) עד שתיקה של 3 שניות ומחזיר לשרת
+      return res.send("read=t-שלום, במה אוכל לעזור לך?=val_1,voice,3,7,120,s,no,no,yes");
     }
 
-    // מקרה 2: קבלת ההקלטה מהמשתמש ועיבודה
+    // מקרה 2: התקבל קובץ הקלטה מהמשתמש
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // שליחה ל-Gemini
+    // פנייה ל-Gemini
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -48,16 +48,17 @@ app.all("/", async (req, res) => {
       ]
     });
 
+    // ניקוי תווים מיוחדים שיכולים לשבור את התשובה בימות המשיח
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    // השמעת תשובת Gemini ופתרון הקלטה נוספת לשאלה הבאה
-    return res.send(`read_mode=record&read_max=120&read_time_out=3&id_list_message=t-${replyText}&val_name=val_1`);
+    // משמיע את התשובה של Gemini + שוב פותח הקלטה לשאלה הבאה!
+    return res.send(`read=t-${replyText}=val_1,voice,3,7,120,s,no,no,yes`);
 
   } catch (error) {
     console.error("Error processing request:", error);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("read_mode=record&read_max=120&read_time_out=3&id_list_message=t-חלה שגיאה תקשורת אנא נסה שוב&val_name=val_1");
+    return res.send("read=t-חלה שגיאה תקשורת, אנא נסה לומר זאת שוב.=val_1,voice,3,7,120,s,no,no,yes");
   }
 });
 
