@@ -18,16 +18,18 @@ app.all("/", async (req, res) => {
       return res.send("");
     }
 
-    // ימות המשיח מעבירה את נתיב הקובץ ב-val_1 כשמסיימים להקליט
-    const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.ApiVoiceFileName;
+    // חיפוש נתיב קובץ ההקלטה בכל הפרמטרים האפשריים מימות המשיח
+    const voiceFileUrl = params.val_1 || params.val_name_1 || params.ApiVoiceFile || params.ApiVoiceFileName;
 
-    // כניסה ראשונית: השמעת הודעה + הקלטה קולית שמסתיימת זהה בשתיקה של 2 שניות
+    // כניסה ראשונית: פקודת read להשמעה והקלטה
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,2,7,120,s,no,no,yes");
     }
 
-    // הורדת קובץ הקול שבימות המשיח הקליטה
+    console.log("Processing audio file from URL:", voiceFileUrl);
+
+    // הורדת השמע מהשרת של ימות המשיח
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
@@ -55,7 +57,6 @@ app.all("/", async (req, res) => {
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    // השמעת התשובה מ-Gemini ופתיחת מיקרופון מיידית לשאלה הבאה
     return res.send(`read=t-${replyText}=val_1,voice,2,7,120,s,no,no,yes`);
 
   } catch (error) {
