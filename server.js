@@ -11,28 +11,29 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // זיכרון זמני לשמירת התשובות
 const responses = {};
 
-// שלוחה 1: מקבלת את קובץ ההקלטה משלוחת record
+// שלוחה 1: מקבלת פנייה, מפעילה הקלטה, מעבדת ומעבירה לשלוחה 2
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     console.log("Audio request params:", params);
 
     const callId = params.ApiCallId;
-    const voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.recording_url;
+    const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.file || params.path;
 
+    // כניסה ראשונית: הפעלת מנגנון ההקלטה הפנימי של ה-API
     if (!voiceFileUrl) {
-      console.log("No audio file found in request params");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("");
+      // מפעיל הקלטה עד סולמית או שתיקה ומחזיר את הנתיב ב-val_1
+      return res.send("record=t-שלום במה אוכל לעזור לך=val_1,2,120,1,no,yes");
     }
 
-    console.log("Processing audio file from URL:", voiceFileUrl);
+    console.log("Processing audio file:", voiceFileUrl);
 
-    // הורדת קובץ השמע מהשרת של ימות המשיח
+    // הורדת קובץ השמע
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
-    // שליחה ל-Gemini Flash 2.5
+    // עיבוד ב-Gemini
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -53,20 +54,20 @@ app.all("/process-audio", async (req, res) => {
       ]
     });
 
-    // שמירת התשובה בזיכרון לפי מזהה השיחה
+    // שמירת התשובה בזיכרון
     responses[callId] = geminiResponse.text.replace(/["'\n\r&]/g, " ");
-    console.log(`Saved response for call ${callId}:`, responses[callId]);
 
+    // מעבר אקטיבי לשלוחה 2
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("");
+    return res.send("go_to_folder=/2");
 
   } catch (error) {
     console.error("Error processing audio:", error);
     const callId = req.query.ApiCallId || req.body.ApiCallId;
-    responses[callId] = "חלה שגיאה בעיבוד ההודעה, אנא נסה שנית";
+    responses[callId] = "חלה שגיאה בעיבוד ההודעה אנא נסה שנית";
     
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send("");
+    return res.send("go_to_folder=/2");
   }
 });
 
@@ -74,7 +75,7 @@ app.all("/process-audio", async (req, res) => {
 app.all("/get-response", (req, res) => {
   const params = { ...req.query, ...req.body };
   const callId = params.ApiCallId;
-  const replyText = responses[callId] || "עדיין מעבד את ההודעה, אנא המתן רגע ונסה שנית";
+  const replyText = responses[callId] || "לא התקבלה תשובה, אנא נסה שנית";
 
   delete responses[callId];
 
