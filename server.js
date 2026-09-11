@@ -8,6 +8,25 @@ app.use(express.json());
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// פונקציית עזר להשהיה בין ניסיונות הורדה
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// פונקציה להורדת הקובץ עם ניסיונות חוזרים (מטפלת בדיליי כתיבה)
+async function downloadAudioWithRetry(url, retries = 3, delayMs = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await axios.get(url, { responseType: "arraybuffer" });
+      if (response.status === 200 && response.data.length > 0) {
+        return response.data;
+      }
+    } catch (err) {
+      console.log(`Download attempt ${i + 1} failed. Retrying in ${delayMs}ms...`);
+      if (i === retries - 1) throw err;
+      await sleep(delayMs);
+    }
+  }
+}
+
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
@@ -15,10 +34,9 @@ app.all("/process-audio", async (req, res) => {
 
     let voiceFileUrl = params.file || params.val_1 || params.ApiVoiceFile || params.path || params.ym_file_path || params.recording_url;
 
-    // במידה ולא התקבל נתיב מפורש, שולפים את ההקלטה משלוחה 1 לפי מזהה השיחה
     if (!voiceFileUrl || voiceFileUrl === "yes") {
       if (params.ApiCallId) {
-        voiceFileUrl = `ivr2:/1/${params.ApiCallId}.wav`;
+        voiceFileUrl = `ivr2:/2/${params.ApiCallId}.wav`;
       }
     }
 
@@ -28,7 +46,6 @@ app.all("/process-audio", async (req, res) => {
       return res.send("id_list_message=t-לא התקבל קובץ הקלטה אנא נסה שנית&go_to_folder=/1");
     }
 
-    // בניית הקישור המלא להורדה כולל ה-token
     if (!voiceFileUrl.startsWith("http")) {
       const systemToken = params.token || "";
       voiceFileUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${systemToken}&path=${voiceFileUrl}`;
@@ -36,9 +53,9 @@ app.all("/process-audio", async (req, res) => {
 
     console.log("Downloading audio from:", voiceFileUrl);
 
-    // הורדת קובץ השמע
-    const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
-    const audioBuffer = Buffer.from(audioResponse.data);
+    // הורדה עם 3 ניסיונות והשהיה של שנייה בין ניסיון לניסיון
+    const audioData = await downloadAudioWithRetry(voiceFileUrl, 3, 1000);
+    const audioBuffer = Buffer.from(audioData);
 
     // שליחה ל-Gemini Flash 2.5
     const geminiResponse = await ai.models.generateContent({
