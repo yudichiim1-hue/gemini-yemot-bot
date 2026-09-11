@@ -13,28 +13,21 @@ app.all("/", async (req, res) => {
     const params = { ...req.query, ...req.body };
     console.log("Incoming request params:", params);
 
-    // ניתוק שיחה
-    if (params.hangup === "yes") {
-      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-      return res.end("");
-    }
+    // ימות המשיח מעבירה את נתיב קובץ ההקלטה בפרמטר val_1
+    const voiceFileUrl = params.val_1;
 
-    const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.ApiVoiceFileName;
-
-    // כניסה ראשונית לשלוחה
+    // מקרה 1: כניסה ראשונית - הגדרת הקלטת קול (read)
     if (!voiceFileUrl) {
-      const responseText = "id_list_message=t-שלום במה אוכל לעזור לך&read_mode=record&read_max=120&read_time_out=3&val_name=val_1";
-      res.writeHead(200, { 
-        "Content-Type": "text/plain; charset=utf-8",
-        "Content-Length": Buffer.byteLength(responseText)
-      });
-      return res.end(responseText);
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      // הפורמט המדויק להפעלת רכיב ההקלטה הקולי של ימות המשיח
+      return res.send("read_mode=record&read_max=120&read_time_out=3&id_list_message=t-שלום במה אוכל לעזור לך&val_name=val_1");
     }
 
-    // קבלת קובץ השמע ועיבוד ב-Gemini
+    // מקרה 2: קבלת ההקלטה מהמשתמש ועיבודה
     const audioResponse = await axios.get(voiceFileUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
+    // שליחה ל-Gemini
     const geminiResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -48,7 +41,7 @@ app.all("/", async (req, res) => {
               }
             },
             {
-              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תווים מיוחדים."
+              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים."
             }
           ]
         }
@@ -56,22 +49,15 @@ app.all("/", async (req, res) => {
     });
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
-    const responseText = `id_list_message=t-${replyText}&read_mode=record&read_max=120&read_time_out=3&val_name=val_1`;
 
-    res.writeHead(200, { 
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Length": Buffer.byteLength(responseText)
-    });
-    return res.end(responseText);
+    res.set("Content-Type", "text/plain; charset=utf-8");
+    // השמעת תשובת Gemini ופתרון הקלטה נוספת לשאלה הבאה
+    return res.send(`read_mode=record&read_max=120&read_time_out=3&id_list_message=t-${replyText}&val_name=val_1`);
 
   } catch (error) {
     console.error("Error processing request:", error);
-    const errorText = "id_list_message=t-חלה שגיאה אנא נסה שוב&read_mode=record&read_max=120&read_time_out=3&val_name=val_1";
-    res.writeHead(200, { 
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Length": Buffer.byteLength(errorText)
-    });
-    return res.end(errorText);
+    res.set("Content-Type", "text/plain; charset=utf-8");
+    return res.send("read_mode=record&read_max=120&read_time_out=3&id_list_message=t-חלה שגיאה תקשורת אנא נסה שוב&val_name=val_1");
   }
 });
 
