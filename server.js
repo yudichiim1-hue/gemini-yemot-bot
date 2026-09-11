@@ -11,17 +11,17 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 app.all("/process-audio", async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    console.log("Incoming call params:", params);
+    console.log("Incoming params:", params);
 
     const token = params.token || "WU1BUElL.apik_EaMppLHizXHkDRaJ16lEXg.TMjXFOQtCfDQyDtbePpTz2qHJrNuBwcqtTRKvTNNsbw";
     
-    // הורדת קובץ ההקלטה שנשמר בשלוחה 1 בשם last.wav
+    // הקובץ נשמר בשלוחה 1 בשם last.wav
     const filePath = "ivr2:/1/last.wav";
-    const fileUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
+    const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${filePath}`;
 
-    console.log("Downloading recorded file from:", fileUrl);
+    console.log("Downloading audio from:", downloadUrl);
 
-    const audioResponse = await axios.get(fileUrl, { responseType: "arraybuffer" });
+    const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer" });
     const audioBuffer = Buffer.from(audioResponse.data);
 
     // שליחה ל-Gemini Flash 2.5
@@ -47,7 +47,6 @@ app.all("/process-audio", async (req, res) => {
 
     const replyText = geminiResponse.text.replace(/["'\n\r&]/g, " ");
 
-    // הקראת התשובה וחזרה לשלוחה 1 להקלטה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${replyText}&go_to_folder=/1`);
 
