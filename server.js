@@ -20,10 +20,11 @@ app.all("/process-audio", async (req, res) => {
     const callId = params.ApiCallId;
     const voiceFileUrl = params.val_1 || params.ApiVoiceFile || params.file;
 
-    // כניסה ראשונית: השמעת הודעה + הפעלת הקלטה
+    // כניסה ראשונית: השמעת הודעה + הפעלת הקלטה קולית מוגדרת היטב
     if (!voiceFileUrl) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,2,7,120,s,no,no,yes");
+      // הפרמטרים: הודעה, שם המשתנה, סוג (voice), שתיקה בשניות (2), מקסימום שניות (120), מינימום שניות (1), חיתוך בסולמית (yes)
+      return res.send("read=t-שלום במה אוכל לעזור לך=val_1,voice,2,120,1,no,yes,yes");
     }
 
     console.log("Processing audio file:", voiceFileUrl);
