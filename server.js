@@ -57,7 +57,7 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2)
   }
 };
 
-// פונקציית עזר מתוקנת לניקוי ופורמט טקסט עבור ימות המשיח
+// פונקציית עזר לניקוי ופורמט טקסט עבור ימות המשיח
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
@@ -66,7 +66,7 @@ const formatTextForYemot = (text) => {
     .replace(/\d+\./g, "")                                 // הסרת מספרי רשימות
     .replace(/\s+/g, " ")                                 // איחוד רווחים כפולים
     .trim()
-    .replace(/ /g, "+");                                  // החלפת רווחים ב-פלוס בלבד
+    .replace(/ /g, "+");                                  // החלפת רווחים ב-פלוס
 };
 
 const handleAudioRequest = async (req, res) => {
@@ -126,8 +126,8 @@ const handleAudioRequest = async (req, res) => {
     if (!audioBuffer) {
       console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const errText = formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב");
-      return res.send(`id_list_message=t-${errText}&go_to_folder=/1`);
+      const errText = encodeURIComponent(`t-${formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב")}`);
+      return res.send(`id_list_message=${errText}&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -184,14 +184,13 @@ const handleAudioRequest = async (req, res) => {
       }
 
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const resetText = formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור");
-      return res.send(`id_list_message=t-${resetText}&go_to_folder=/1`);
+      const resetText = encodeURIComponent(`t-${formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור")}`);
+      return res.send(`id_list_message=${resetText}&go_to_folder=/1`);
     }
 
     // --- טעינה ועדכון של היסטוריית השיחה ---
     let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
     
-    // איפוס הטיימר של 10 דקות בכל הודעה חדשה
     if (userSession.timer) clearTimeout(userSession.timer);
     userSession.timer = setTimeout(() => {
       console.log(`[History] עברו 10 דקות, מוחק היסטוריית שיחה עבור ${userPhone}`);
@@ -202,7 +201,7 @@ const handleAudioRequest = async (req, res) => {
 
     const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
 
-    // --- 3. תשובה מ-OpenRouter (שילוב היסטוריה) ---
+    // --- 3. תשובה מ-OpenRouter ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
       try {
         console.log("[OpenRouter] שולח בקשה עם היסטוריית שיחה ל-openrouter/free...");
@@ -240,7 +239,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- 4. Fallback - Gemini (שילוב היסטוריה) ---
+    // --- 4. Fallback - Gemini ---
     if (!finalAnswerText && geminiKeys.length > 0) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל עם היסטוריית שיחה...");
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
@@ -297,12 +296,12 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
     }
 
-    // --- 5. ניקוי ופורמט עברית עבור ימות המשיח ---
-    const formattedResponse = formatTextForYemot(finalAnswerText);
+    // --- 5. ניקוי, פורמט וקידוד תקין עבור ימות המשיח ---
+    const cleanText = formatTextForYemot(finalAnswerText);
+    const encodedMessage = encodeURIComponent(`t-${cleanText}`);
 
-    console.log("תשובה סופית נקייה ומפורמטת:", formattedResponse);
+    console.log("תשובה מפורמטת להקראה:", cleanText);
 
-    // שמירת התגובה והתמלול הנוכחי בהיסטוריה של המשתמש
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
       userSession.history.push({ role: "assistant", content: finalAnswerText });
@@ -315,14 +314,14 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${formattedResponse}&go_to_folder=/1`);
+    return res.send(`id_list_message=${encodedMessage}&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    const genericErrText = formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית");
-    return res.send(`id_list_message=t-${genericErrText}&go_to_folder=/1`);
+    const errFormatted = encodeURIComponent(`t-${formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית")}`);
+    return res.send(`id_list_message=${errFormatted}&go_to_folder=/1`);
   }
 };
 
