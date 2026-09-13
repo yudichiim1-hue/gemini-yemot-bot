@@ -224,7 +224,7 @@ const handleAudioRequest = async (req, res) => {
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
-    res.set("Content-Type",="text/plain; charset=utf-8");
+   res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
   }
 };
