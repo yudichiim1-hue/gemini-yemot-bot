@@ -15,9 +15,8 @@ const handleAudioRequest = async (req, res) => {
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const primaryFolder = params.SHM || "2";
     const secondaryFolder = params.SHL || "1";
-    const modelName = params.MODEL || "gemini-2.5-flash";
     
-    // משיכת המפתח בלעדית מ-Render
+    // משיכת המפתח מ-Render בלבד
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -60,7 +59,12 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
     }
 
-    console.log(`שולח ל-Gemini REST API עם המפתח מ-Render...`);
+    // רשימת דגמים לניסיון בסדר עדיפויות (למקרה של עומס 503)
+    const modelsToTry = [
+      params.MODEL || "gemini-2.5-flash",
+      "gemini-1.5-flash",
+      "gemini-2.0-flash"
+    ];
 
     const payload = {
       contents: [
@@ -81,13 +85,34 @@ const handleAudioRequest = async (req, res) => {
       ]
     };
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+    let responseData = null;
 
-    const response = await axios.post(geminiUrl, payload, {
-      headers: { "Content-Type": "application/json" }
-    });
+    // ניסיון פנייה לדגמים לפי הסדר במקרה של עומס
+    for (const model of modelsToTry) {
+      try {
+        console.log(`מנסה לשלוח ל-Gemini מודל: ${model}...`);
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        
+        const response = await axios.post(geminiUrl, payload, {
+          headers: { "Content-Type": "application/json" },
+          timeout: 15000
+        });
 
-    const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "לא התקבלה תשובה";
+        if (response.data) {
+          responseData = response.data;
+          console.log(`התקבלה תשובה בהצלחה מהמודל ${model}!`);
+          break;
+        }
+      } catch (modelError) {
+        console.warn(`המודל ${model} נכשל/עמוס (שגיאה ${modelError.response?.status || modelError.message}). מנסה את המודל הבא...`);
+      }
+    }
+
+    if (!responseData) {
+      throw new Error("כל המודלים עמוסים כרגע, נסה שנית בעוד מספר רגעים.");
+    }
+
+    const rawText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text || "לא התקבלה תשובה";
     const cleanText = rawText.replace(/["'\n\r&?=<>/]/g, " ").trim();
     console.log("תשובת Gemini:", cleanText);
 
@@ -95,9 +120,9 @@ const handleAudioRequest = async (req, res) => {
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`);
 
   } catch (error) {
-    console.error("שגיאה בעיבוד מול Gemini:", error.response?.data || error.message);
+    console.error("שגיאה בעיבוד מול Gemini:", error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
+    return res.send(`id_list_message=t-חלה שגיאה או עומס בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
   }
 };
 
