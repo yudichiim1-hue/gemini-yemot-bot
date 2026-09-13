@@ -243,8 +243,9 @@ const cleanText = finalAnswerText
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    // החזרה ישירה לתיקיית ההקלטה הראשית (SHM)
-return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${primaryFolder}`);
+// השמעת התשובה ומיד מעבר להקלטה חדשה בתיקיה הראשית
+return res.send(`read=t-${cleanText}=record,no,1,1,1,no,no,no&go_to_folder=/${primaryFolder}`);
+
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
