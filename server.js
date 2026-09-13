@@ -56,7 +56,7 @@ const handleAudioRequest = async (req, res) => {
       console.log(`[Cache] קריאה כפולה זוהתה עבור ${callId}, מחזיר מעבר שקט.`);
       processedCalls.delete(callId);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`go_to_folder=/${secondaryFolder}`);
+      return res.send(`read=t-מקליט=f-1-1,no,1,7,7,no,yes,no`);
     }
 
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
@@ -96,7 +96,7 @@ const handleAudioRequest = async (req, res) => {
     if (!audioBuffer) {
       console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
+      return res.send(`read=t-לא נמצאה הקלטה תקינה אנא הקלט שוב=f-1-1,no,1,7,7,no,yes,no`);
     }
 
     let transcribedText = "";
@@ -142,10 +142,10 @@ const handleAudioRequest = async (req, res) => {
     // --- 3. תשובה מ-OpenRouter (דגמים חינמיים עדכניים) ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
       const openRouterModels = [
-        "google/gemini-2.5-flash:free",
-        "meta-llama/llama-3.2-11b-vision-instruct:free",
-        "qwen/qwen-2.5-72b-instruct:free",
-        "mistralai/mistral-7b-instruct:free"
+        "google/gemini-2.0-flash-lite-preview-02-05:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "deepseek/deepseek-r1:free",
+        "qwen/qwen-2.5-vl-72b-instruct:free"
       ];
 
       for (const model of openRouterModels) {
@@ -192,7 +192,8 @@ const handleAudioRequest = async (req, res) => {
     // --- 4. Fallback - Gemini ---
     if (!finalAnswerText && geminiKeys.length > 0) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+      // העברת flash-lite לראש התור למניעת חריגת מכסה (429)
+      const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
       const promptText = `אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. השאלה שנשאלה: "${transcribedText}"`;
 
@@ -226,14 +227,13 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
     }
 
-    // ניקוי מוחלט של כל סימני הפיסוק, האותיות באנגלית והתווים המיוחדים
-const cleanText = finalAnswerText
-  .replace(/[a-zA-Z]/g, "")                        // הסרת אותיות באנגלית
-  .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") // הסרת כל סימני הפיסוק והעיצוב
-  .replace(/\d+\./g, "")                            // הסרת מספרי רשימות (למשל 1.)
-  .replace(/\s+/g, " ")                            // איחוד רווחים מרובים לרווח יחיד
-  .trim();
-
+    // --- 5. ניקוי מוחלט של סימני פיסוק, ניקוד ותווים מיוחדים ---
+    const cleanText = finalAnswerText
+      .replace(/[a-zA-Z]/g, "")                             // הסרת אותיות באנגלית
+      .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") // הסרת כל סימני הפיסוק והתווים המיוחדים
+      .replace(/\d+\./g, "")                                 // הסרת מספרי רשימות
+      .replace(/\s+/g, " ")                                 // איחוד רווחים כפולים
+      .trim();
 
     console.log("תשובה סופית נקייה:", cleanText);
 
@@ -242,16 +242,15 @@ const cleanText = finalAnswerText
       setTimeout(() => processedCalls.delete(callId), 120000);
     }
 
+    // --- 6. השמעת התשובה והעברה מידית להקלטה נוספת באותה הקריאה ---
     res.set("Content-Type", "text/plain; charset=utf-8");
-// השמעת התשובה ומיד מעבר להקלטה חדשה בתיקיה הראשית
-return res.send(`read=t-${cleanText}=record,no,1,1,1,no,no,no&go_to_folder=/${primaryFolder}`);
-
+    return res.send(`read=t-${cleanText}=f-1-1,no,1,7,7,no,yes,no`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
+    return res.send(`read=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית=f-1-1,no,1,7,7,no,yes,no`);
   }
 };
 
