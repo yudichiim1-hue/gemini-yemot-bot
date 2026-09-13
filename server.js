@@ -8,7 +8,7 @@ app.use(express.json({ limit: "50mb" }));
 
 const processedCalls = new Map();
 
-// --- 1. נתיבי Ping עבור UptimeRobot למניעת הרדמת השרת ---
+// --- 1. נתיבי Ping עבור UptimeRobot ---
 app.get("/ping", (req, res) => {
   res.status(200).send("PONG");
 });
@@ -17,8 +17,8 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date() });
 });
 
-// פונקציית עזר לקריאות מול Gemini עם מנגנון Retry לשגיאות 429
-const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 3) => {
+// פונקציית עזר לקריאות מול Gemini עם מנגנון Retry
+const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -30,10 +30,9 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 3)
       return response;
     } catch (err) {
       const status = err.response?.status;
-      
       if (status === 429 && attempt < maxRetries) {
-        const delay = 3000 * attempt; 
-        console.warn(`[Gemini 429] חריגת מכסה בדגם ${model}. מנסה שוב בעוד ${delay / 1000} שניות (ניסיון ${attempt}/${maxRetries})...`);
+        const delay = 2000 * attempt; 
+        console.warn(`[Gemini 429] חריגת מכסה בדגם ${model}. מנסה שוב בעוד ${delay / 1000} שניות...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
         throw err;
@@ -62,7 +61,13 @@ const handleAudioRequest = async (req, res) => {
 
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const groqApiKey = (process.env.GROQ_API_KEY || "").trim();
-    const geminiApiKey = (process.env.GEMINI_API_KEY || "").trim();
+    const openRouterApiKey = (process.env.OPENROUTER_API_KEY || "").trim();
+    
+    // מערך מפתחות Gemini - תמיכה במפתח ראשי ובמפתח משני
+    const geminiKeys = [
+      (process.env.GEMINI_API_KEY || "").trim(),
+      (process.env.GEMINI_API_KEY_1 || "").trim()
+    ].filter(key => key.length > 0);
 
     let audioBuffer = null;
     const possiblePaths = [];
@@ -134,15 +139,19 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    // --- 3. תשובה מ-Groq Llama ---
-    if (groqApiKey && transcribedText.trim().length > 0) {
-      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+    // --- 3. תשובה מ-OpenRouter (דגמים חינמיים) ---
+    if (openRouterApiKey && transcribedText.trim().length > 0) {
+      const openRouterModels = [
+        "deepseek/deepseek-r1:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemini-2.0-flash-exp:free"
+      ];
 
-      for (const model of groqModels) {
+      for (const model of openRouterModels) {
         try {
-          console.log(`[Groq] מנסה דגם שפה: ${model}...`);
-          const groqCompletion = await axios.post(
-            "https://api.groq.com/openai/v1/chat/completions",
+          console.log(`[OpenRouter] מנסה דגם שפה: ${model}...`);
+          const openRouterCompletion = await axios.post(
+            "https://openrouter.ai/api/v1/chat/completions",
             {
               model: model,
               messages: [
@@ -159,62 +168,70 @@ const handleAudioRequest = async (req, res) => {
             },
             {
               headers: {
-                "Authorization": `Bearer ${groqApiKey}`,
-                "Content-Type": "application/json"
+                "Authorization": `Bearer ${openRouterApiKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://render.com",
+                "X-Title": "Yemot Telephony AI"
               },
-              timeout: 8000
+              timeout: 12000
             }
           );
 
-          finalAnswerText = groqCompletion.data?.choices?.[0]?.message?.content || "";
+          finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
           if (finalAnswerText) {
-            console.log(`[Groq] התקבלה תשובה מ-Groq (${model})!`);
+            console.log(`[OpenRouter] התקבלה תשובה מ-OpenRouter (${model})!`);
             break;
           }
         } catch (err) {
-          console.error(`[Groq שגיאה בדגם ${model}]:`, err.response?.status, err.response?.data || err.message);
+          console.error(`[OpenRouter שגיאה בדגם ${model}]:`, err.response?.status, err.response?.data || err.message);
         }
       }
     }
 
-    // --- 4. Fallback - Gemini ---
-    if (!finalAnswerText && geminiApiKey) {
+    // --- 4. Fallback - Gemini (עם תמיכה ברוטציית מפתחות) ---
+    if (!finalAnswerText && geminiKeys.length > 0) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const geminiModels = ["gemini-2.5-flash", "gemini-1.5-flash"];
+      const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
-      const promptText = `אתה עוזר קולי בטלפון. ענה בעברית בלבד, רציף וקולח, ללא רשימות, ללא מספרים, ללא סוגריים וללא אנגלית. שאלה: "${transcribedText}"`;
+      const promptText = `אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. השאלה שנשאלה: "${transcribedText}"`;
 
       const payload = transcribedText
         ? { contents: [{ role: "user", parts: [{ text: promptText }] }] }
-        : { contents: [{ role: "user", parts: [{ text: "ענה בעברית פשוטה וקצרה בלבד" }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] }] };
+        : { contents: [{ role: "user", parts: [{ text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה וקצרה בלבד." }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] }] };
 
-      for (const model of geminiModels) {
-        try {
-          console.log(`[Gemini] מנסה דגם: ${model}...`);
-          const response = await callGeminiWithRetry(model, payload, geminiApiKey);
+      keyLoop:
+      for (let i = 0; i < geminiKeys.length; i++) {
+        const apiKey = geminiKeys[i];
+        console.log(`[Gemini] מנסה מפתח API מס' ${i + 1}...`);
 
-          if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-            finalAnswerText = response.data.candidates[0].content.parts[0].text;
-            console.log(`[Gemini] התקבלה תשובה מדגם ${model}!`);
-            break;
+        for (const model of geminiModels) {
+          try {
+            console.log(`[Gemini] מנסה דגם: ${model}...`);
+            const response = await callGeminiWithRetry(model, payload, apiKey);
+
+            if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+              finalAnswerText = response.data.candidates[0].content.parts[0].text;
+              console.log(`[Gemini] התקבלה תשובה מדגם ${model} באמצעות מפתח מס' ${i + 1}!`);
+              break keyLoop;
+            }
+          } catch (err) {
+            console.error(`[Gemini שגיאה במפתח ${i + 1} בדגם ${model}]:`, err.response?.status, err.response?.data || err.message);
           }
-        } catch (err) {
-          console.error(`[Gemini שגיאה בדגם ${model}]:`, err.response?.status, err.response?.data || err.message);
         }
       }
     }
 
     if (!finalAnswerText) {
-      throw new Error("לא התקבלה תשובה מאיש ספק (Groq / Gemini).");
+      throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
     }
 
-    // ניקוי מוחלט של תווים מיוחדים לקריאה נקייה בימות המשיח
+    // ניקוי תווים מיוחדים לקריאה נקייה בימות המשיח
     const cleanText = finalAnswerText
-      .replace(/[a-zA-Z]/g, "")                 // הסרת אותיות באנגלית
-      .replace(/[*_~`#\-–—:]/g, " ")             // הסרת כותרות, מקפים ונקודתיים
-      .replace(/["'\n\r&?=<>/()\\[\]{}]/g, " ") // הסרת גרשיים, סוגריים, ירידות שורה
-      .replace(/\d+\./g, "")                     // הסרת מספרי רשימה (1. 2.)
-      .replace(/\s+/g, " ")                     // איחוד רווחים כפולים
+      .replace(/[a-zA-Z]/g, "")
+      .replace(/[*_~`#\-–—:]/g, " ")
+      .replace(/["'\n\r&?=<>/()\\[\]{}]/g, " ")
+      .replace(/\d+\./g, "")
+      .replace(/\s+/g, " ")
       .trim();
 
     console.log("תשובה סופית נקייה:", cleanText);
