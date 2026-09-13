@@ -57,18 +57,16 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2)
   }
 };
 
-// פונקציית עזר לניקוי וקידוד טקסט עבור ימות המשיח
+// פונקציית עזר מתוקנת לניקוי ופורמט טקסט עבור ימות המשיח
 const formatTextForYemot = (text) => {
   if (!text) return "";
-  const cleaned = text
+  return text
     .replace(/[a-zA-Z]/g, "")                             // הסרת אותיות באנגלית
     .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") // הסרת סימני פיסוק ותווים מיוחדים
     .replace(/\d+\./g, "")                                 // הסרת מספרי רשימות
     .replace(/\s+/g, " ")                                 // איחוד רווחים כפולים
-    .trim();
-
-  // קידוד URL תקין והחלפת רווחים ב-+
-  return encodeURIComponent(cleaned).replace(/%20/g, "+");
+    .trim()
+    .replace(/ /g, "+");                                  // החלפת רווחים ב-פלוס בלבד
 };
 
 const handleAudioRequest = async (req, res) => {
@@ -299,12 +297,12 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
     }
 
-    // --- 5. ניקוי וקידוד מוחלט עבור ימות המשיח ---
+    // --- 5. ניקוי ופורמט עברית עבור ימות המשיח ---
     const formattedResponse = formatTextForYemot(finalAnswerText);
 
-    console.log("תשובה סופית נקייה ומקודדת:", formattedResponse);
+    console.log("תשובה סופית נקייה ומפורמטת:", formattedResponse);
 
-    // שמירת התגובה והתמלול הנוכחי בהיסטוריה של המשתמש (בפורמט קריא)
+    // שמירת התגובה והתמלול הנוכחי בהיסטוריה של המשתמש
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
       userSession.history.push({ role: "assistant", content: finalAnswerText });
