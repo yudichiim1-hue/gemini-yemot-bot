@@ -133,9 +133,9 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    // --- 3. תשובה מ-Groq Llama ---
+    // --- 3. תשובה מ-Groq Llama (דגמים עדכניים) ---
     if (groqApiKey && transcribedText.trim().length > 0) {
-      const groqModels = ["llama3-8b-8192"];
+      const groqModels = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
 
       for (const model of groqModels) {
         try {
@@ -176,10 +176,10 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- 4. Fallback - Gemini (עם Retry) ---
+    // --- 4. Fallback - Gemini (עם דגמים מעודכנים ו-Retry) ---
     if (!finalAnswerText && geminiApiKey) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const geminiModels = ["gemini-2.5-flash", "gemini-1.5-flash-8b"];
+      const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
       const payload = transcribedText
         ? { contents: [{ role: "user", parts: [{ text: `ענה בעברית קצרה: "${transcribedText}"` }] }] }
