@@ -139,53 +139,43 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    // --- 3. תשובה מ-OpenRouter (דגמים חינמיים עדכניים) ---
+    // --- 3. תשובה מ-OpenRouter (שילוב הנתיב החינמי האוטומטי) ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
-      const openRouterModels = [
-        "google/gemini-2.0-flash-exp:free",
-        "meta-llama/llama-3.1-8b-instruct:free",
-        "mistralai/mistral-small-24b-instruct-2501:free",
-        "qwen/qwen-2.5-7b-instruct:free"
-      ];
-
-      for (const model of openRouterModels) {
-        try {
-          console.log(`[OpenRouter] מנסה דגם שפה: ${model}...`);
-          const openRouterCompletion = await axios.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            {
-              model: model,
-              messages: [
-                {
-                  role: "system",
-                  content: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים."
-                },
-                {
-                  role: "user",
-                  content: transcribedText
-                }
-              ],
-              temperature: 0.6
-            },
-            {
-              headers: {
-                "Authorization": `Bearer ${openRouterApiKey}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://render.com",
-                "X-Title": "Yemot Telephony AI"
+      try {
+        console.log("[OpenRouter] שולח בקשה לנתיב החינמי האוטומטי (openrouter/free)...");
+        const openRouterCompletion = await axios.post(
+          "https://openrouter.ai/api/v1/chat/completions",
+          {
+            model: "openrouter/free",
+            messages: [
+              {
+                role: "system",
+                content: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים."
               },
-              timeout: 12000
-            }
-          );
-
-          finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-          if (finalAnswerText) {
-            console.log(`[OpenRouter] התקבלה תשובה מ-OpenRouter (${model})!`);
-            break;
+              {
+                role: "user",
+                content: transcribedText
+              }
+            ],
+            temperature: 0.6
+          },
+          {
+            headers: {
+              "Authorization": `Bearer ${openRouterApiKey}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "https://render.com",
+              "X-Title": "Yemot Telephony AI"
+            },
+            timeout: 10000
           }
-        } catch (err) {
-          console.error(`[OpenRouter שגיאה בדגם ${model}]:`, err.response?.status, err.response?.data || err.message);
+        );
+
+        finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
+        if (finalAnswerText) {
+          console.log("[OpenRouter] התקבלה תשובה בהצלחה מ-openrouter/free!");
         }
+      } catch (err) {
+        console.error("[OpenRouter שגיאה]:", err.response?.status, err.response?.data || err.message);
       }
     }
 
