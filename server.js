@@ -6,7 +6,7 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
-// זיכרון מטמון למניעת כפילויות מקריאות חוזרות של ימות המשיח
+// זיכרון מטמון למניעת כפילויות מקריאות חוזרות
 const responseCache = new Map();
 
 const handleAudioRequest = async (req, res) => {
@@ -17,7 +17,7 @@ const handleAudioRequest = async (req, res) => {
     console.log("--- התקבלה קריאה חדשה ---");
     console.log("Call ID:", callId);
 
-    // אם הקריאה הזו כבר טופלה בשניות האחרונות, מחזירים את התשובה השמורה
+    // אם הקריאה הזו כבר טופלה, מחזירים את התשובה השמורה
     if (callId && responseCache.has(callId)) {
       console.log(`קריאה כפולה זוהתה עבור ${callId}, מחזיר תשובה מהמטמון...`);
       res.set("Content-Type", "text/plain; charset=utf-8");
@@ -48,8 +48,6 @@ const handleAudioRequest = async (req, res) => {
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
-      
-      console.log("מנסה להוריד מנתיב:", cleanPath);
 
       try {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer" });
@@ -59,7 +57,7 @@ const handleAudioRequest = async (req, res) => {
           break;
         }
       } catch (err) {
-        console.log(`לא נמצא קובץ בנתיב: ${cleanPath}`);
+        // לא נמצא בנתיב הנוכחי
       }
     }
 
@@ -69,7 +67,6 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
     }
 
-    // רשימת מודלים למקרה של עומס
     const modelsToTry = [
       params.MODEL || "gemini-2.5-flash",
       "gemini-1.5-flash",
@@ -82,7 +79,7 @@ const handleAudioRequest = async (req, res) => {
           role: "user",
           parts: [
             {
-              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תווים מיוחדים."
+              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה בשיח טבעי ורציף (עד 2 משפטים). אל תשתמש באימוג'ים, סימני פיסוק מיוחדים, מקפים או סוגריים."
             },
             {
               inlineData: {
@@ -99,9 +96,7 @@ const handleAudioRequest = async (req, res) => {
 
     for (const model of modelsToTry) {
       try {
-        console.log(`מנסה לשלוח ל-Gemini מודל: ${model}...`);
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        
         const response = await axios.post(geminiUrl, payload, {
           headers: { "Content-Type": "application/json" },
           timeout: 15000
@@ -109,11 +104,10 @@ const handleAudioRequest = async (req, res) => {
 
         if (response.data) {
           responseData = response.data;
-          console.log(`התקבלה תשובה בהצלחה מהמודל ${model}!`);
           break;
         }
       } catch (modelError) {
-        console.warn(`המודל ${model} נכשל/עמוס. מנסה את הבא...`);
+        console.warn(`המודל ${model} נכשל/עמוס. מנסה מודל הבא...`);
       }
     }
 
@@ -122,12 +116,19 @@ const handleAudioRequest = async (req, res) => {
     }
 
     const rawText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text || "לא התקבלה תשובה";
-    const cleanText = rawText.replace(/["'\n\r&?=<>/]/g, " ").trim();
-    console.log("תשובת Gemini:", cleanText);
+    
+    // ניקוי יסודי של תווים שגורמים לקיטועים ב-TTS של ימות המשיח
+    const cleanText = rawText
+      .replace(/[*_~`#\-–—]/g, " ")
+      .replace(/["'\n\r&?=<>/()\\[\]{}]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
+    console.log("תשובת Gemini נקייה:", cleanText);
+
+    // פורמט תגובה המונע בלולאות ומבטיח הקראה מלאה
     const finalResponse = `id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`;
 
-    // שמירת התשובה במטמון ל-2 דקות כדי למנוע קריסות בקריאה כפולה
     if (callId) {
       responseCache.set(callId, finalResponse);
       setTimeout(() => responseCache.delete(callId), 120000);
