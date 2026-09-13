@@ -10,20 +10,20 @@ const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     console.log("--- התקבלה קריאה חדשה ---");
-    console.log("כל הפרמטרים מימות המשיח:", JSON.stringify(params, null, 2));
+    console.log("פרמטרים מימות המשיח:", JSON.stringify(params, null, 2));
 
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const primaryFolder = params.SHM || "2";
     const secondaryFolder = params.SHL || "1";
     const modelName = params.MODEL || "gemini-2.5-flash";
     
-    // משיכת המפתח שהעברת
-    const apiKey = params.API || params.KEY2 || process.env.GEMINI_API_KEY;
+    // משיכת המפתח בלעדית מ-Render
+    const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      console.error("שגיאה: לא הועבר מפתח");
+      console.error("שגיאה: GEMINI_API_KEY אינו מוגדר ב-Render!");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-חסר מפתח גישה&go_to_folder=/${secondaryFolder}`);
+      return res.send(`id_list_message=t-מפתח ה-API אינו מוגדר בשרת&go_to_folder=/${secondaryFolder}`);
     }
 
     let audioBuffer = null;
@@ -34,7 +34,6 @@ const handleAudioRequest = async (req, res) => {
 
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
-    possiblePaths.push(`ivr2:/1/last.wav`);
 
     // הורדת השמע מימות המשיח
     for (let rawPath of possiblePaths) {
@@ -61,10 +60,7 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
     }
 
-    console.log(`שולח ל-Gemini REST API עם האסימון...`);
-
-    // שליחה ישירה ב-REST API עם Authorization Bearer
-    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+    console.log(`שולח ל-Gemini REST API עם המפתח מ-Render...`);
 
     const payload = {
       contents: [
@@ -85,21 +81,11 @@ const handleAudioRequest = async (req, res) => {
       ]
     };
 
-    // שליחה - תמיכה גם ב-Bearer Token וגם ב-key במידת הצורך
-    const headers = {
-      "Content-Type": "application/json"
-    };
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-    if (apiKey.startsWith("AIzaSy")) {
-      // API Key רגיל
-    } else {
-      // אסימון OAuth / Access Token
-      headers["Authorization"] = `Bearer ${apiKey}`;
-    }
-
-    const geminiUrl = apiKey.startsWith("AIzaSy") ? `${geminiEndpoint}?key=${apiKey}` : geminiEndpoint;
-
-    const response = await axios.post(geminiUrl, payload, { headers });
+    const response = await axios.post(geminiUrl, payload, {
+      headers: { "Content-Type": "application/json" }
+    });
 
     const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "לא התקבלה תשובה";
     const cleanText = rawText.replace(/["'\n\r&?=<>/]/g, " ").trim();
