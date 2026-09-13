@@ -57,7 +57,7 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2)
   }
 };
 
-// פונקציית עזר לניקוי ופורמט טקסט עבור ימות המשיח
+// פונקציית עזר לניקוי ופורמט טקסט עברי בלבד עבור ימות המשיח
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
@@ -84,7 +84,7 @@ const handleAudioRequest = async (req, res) => {
 
     // מניעת כפילויות רגעיות
     if (callId && processedCalls.has(callId)) {
-      console.log(`[Cache] קריאה כפולה זוהתה עבור ${callId}, מחזיר מעבר שקט לשלוחה /1.`);
+      console.log(`[Cache] קריאה כפולה זוהתה עבור ${callId}, מחזיר מעבר שקט.`);
       processedCalls.delete(callId);
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
@@ -126,8 +126,8 @@ const handleAudioRequest = async (req, res) => {
     if (!audioBuffer) {
       console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const errText = encodeURIComponent(`t-${formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב")}`);
-      return res.send(`id_list_message=${errText}&go_to_folder=/1`);
+      const errText = formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב");
+      return res.send(`id_list_message=t-${errText}`);
     }
 
     let transcribedText = "";
@@ -184,8 +184,8 @@ const handleAudioRequest = async (req, res) => {
       }
 
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const resetText = encodeURIComponent(`t-${formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור")}`);
-      return res.send(`id_list_message=${resetText}&go_to_folder=/1`);
+      const resetText = formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור");
+      return res.send(`id_list_message=t-${resetText}`);
     }
 
     // --- טעינה ועדכון של היסטוריית השיחה ---
@@ -296,9 +296,8 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
     }
 
-    // --- 5. ניקוי, פורמט וקידוד תקין עבור ימות המשיח ---
+    // --- 5. פורמט נקי לעברית עם פלוסים ---
     const cleanText = formatTextForYemot(finalAnswerText);
-    const encodedMessage = encodeURIComponent(`t-${cleanText}`);
 
     console.log("תשובה מפורמטת להקראה:", cleanText);
 
@@ -314,14 +313,14 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=${encodedMessage}&go_to_folder=/1`);
+    return res.send(`id_list_message=t-${cleanText}`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    const errFormatted = encodeURIComponent(`t-${formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית")}`);
-    return res.send(`id_list_message=${errFormatted}&go_to_folder=/1`);
+    const errFormatted = formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית");
+    return res.send(`id_list_message=t-${errFormatted}`);
   }
 };
 
