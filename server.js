@@ -226,14 +226,14 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
     }
 
-    // ניקוי תווים מיוחדים לקריאה נקייה בימות המשיח
-    const cleanText = finalAnswerText
-      .replace(/[a-zA-Z]/g, "")
-      .replace(/[*_~`#\-–—:]/g, " ")
-      .replace(/["'\n\r&?=<>/()\\[\]{}]/g, " ")
-      .replace(/\d+\./g, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    // ניקוי מוחלט של כל סימני הפיסוק, האותיות באנגלית והתווים המיוחדים
+const cleanText = finalAnswerText
+  .replace(/[a-zA-Z]/g, "")                        // הסרת אותיות באנגלית
+  .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") // הסרת כל סימני הפיסוק והעיצוב
+  .replace(/\d+\./g, "")                            // הסרת מספרי רשימות (למשל 1.)
+  .replace(/\s+/g, " ")                            // איחוד רווחים מרובים לרווח יחיד
+  .trim();
+
 
     console.log("תשובה סופית נקייה:", cleanText);
 
