@@ -133,9 +133,9 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    // --- 3. תשובה מ-Groq Llama (דגמים יציבים ומעודכנים) ---
+    // --- 3. תשובה מ-Groq Llama ---
     if (groqApiKey && transcribedText.trim().length > 0) {
-      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
+      const groqModels = ["llama-3.1-8b-instant", "llama3-70b-8192"];
 
       for (const model of groqModels) {
         try {
@@ -207,13 +207,13 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיש ספק (Groq / Gemini).");
     }
 
-    // ניקוי מוחלט של כל התווים שעלולים לשבור את ה-TTS של ימות המשיח
+    // ניקוי מוחלט של תוים מיוחדים לקריאה נקייה בימות המשיח
     const cleanText = finalAnswerText
       .replace(/[a-zA-Z]/g, "")                 // הסרת אותיות באנגלית
       .replace(/[*_~`#\-–—:]/g, " ")             // הסרת כותרות, מקפים ונקודתיים
-      .replace(/["'\n\r&?=<>/()\\[\]{}]/g, " ") // הסרת גרשיים, סוגריים, ירידות שורה וסימני פיסוק מיוחדים
-      .replace(/\d+\./g, "")                     // הסרת מספרי רשימה (כגון 1. 2.)
-      .replace(/\s+/g, " ")                     // איחוד רווחים כפולים לרווח יחיד
+      .replace(/["'\n\r&?=<>/()\\[\]{}]/g, " ") // הסרת גרשיים, סוגריים, ירידות שורה
+      .replace(/\d+\./g, "")                     // הסרת מספרי רשימה (1. 2.)
+      .replace(/\s+/g, " ")                     // איחוד רווחים כפולים
       .trim();
 
     console.log("תשובה סופית נקייה:", cleanText);
@@ -224,10 +224,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-
-    // קידוד בטוח של הטקסט למניעת שגיאות פענוח בימות המשיח
-    const encodedMessage = encodeURIComponent(cleanText);
-    return res.send(`id_list_message=t-${encodedMessage}&go_to_folder=/${secondaryFolder}`);
+    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
