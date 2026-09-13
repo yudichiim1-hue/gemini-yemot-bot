@@ -231,10 +231,7 @@ const handleAudioRequest = async (req, res) => {
       setTimeout(() => processedCalls.delete(callId), 120000);
     }
 
-    // --- 6. השמעת התשובה והעברה מידית להקלטה נוספת באותה הקריאה ---
-    res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`read=t-${cleanText}=f-1-1,no,1,7,7,no,yes,no`);
-
+    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
