@@ -141,11 +141,13 @@ const handleAudioRequest = async (req, res) => {
 
     // --- 3. תשובה מ-OpenRouter (דגמים חינמיים עדכניים) ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
-      const openRouterModels = [
-        "google/gemini-2.0-flash-lite-preview-02-05:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "deepseek/deepseek-r1:free",
-        "qwen/qwen-2.5-vl-72b-instruct:free"
+            const openRouterModels = [
+        "google/gemini-2.0-flash-exp:free",
+        "meta-llama/llama-3.1-8b-instruct:free",
+        "mistralai/mistral-small-24b-instruct-2501:free",
+        "qwen/qwen-2.5-7b-instruct:free"
+      ];
+
       ];
 
       for (const model of openRouterModels) {
