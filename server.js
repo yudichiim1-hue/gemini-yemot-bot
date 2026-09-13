@@ -6,17 +6,27 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
+// זיכרון מטמון למניעת כפילויות מקריאות חוזרות של ימות המשיח
+const responseCache = new Map();
+
 const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
+    const callId = params.ApiCallId || params.ApiYFCallId;
+
     console.log("--- התקבלה קריאה חדשה ---");
-    console.log("פרמטרים מימות המשיח:", JSON.stringify(params, null, 2));
+    console.log("Call ID:", callId);
+
+    // אם הקריאה הזו כבר טופלה בשניות האחרונות, מחזירים את התשובה השמורה
+    if (callId && responseCache.has(callId)) {
+      console.log(`קריאה כפולה זוהתה עבור ${callId}, מחזיר תשובה מהמטמון...`);
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(responseCache.get(callId));
+    }
 
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const primaryFolder = params.SHM || "2";
     const secondaryFolder = params.SHL || "1";
-    
-    // משיכת המפתח מ-Render בלבד
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -59,7 +69,7 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
     }
 
-    // רשימת דגמים לניסיון בסדר עדיפויות (למקרה של עומס 503)
+    // רשימת מודלים למקרה של עומס
     const modelsToTry = [
       params.MODEL || "gemini-2.5-flash",
       "gemini-1.5-flash",
@@ -87,7 +97,6 @@ const handleAudioRequest = async (req, res) => {
 
     let responseData = null;
 
-    // ניסיון פנייה לדגמים לפי הסדר במקרה של עומס
     for (const model of modelsToTry) {
       try {
         console.log(`מנסה לשלוח ל-Gemini מודל: ${model}...`);
@@ -104,25 +113,33 @@ const handleAudioRequest = async (req, res) => {
           break;
         }
       } catch (modelError) {
-        console.warn(`המודל ${model} נכשל/עמוס (שגיאה ${modelError.response?.status || modelError.message}). מנסה את המודל הבא...`);
+        console.warn(`המודל ${model} נכשל/עמוס. מנסה את הבא...`);
       }
     }
 
     if (!responseData) {
-      throw new Error("כל המודלים עמוסים כרגע, נסה שנית בעוד מספר רגעים.");
+      throw new Error("כל המודלים עמוסים כרגע.");
     }
 
     const rawText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text || "לא התקבלה תשובה";
     const cleanText = rawText.replace(/["'\n\r&?=<>/]/g, " ").trim();
     console.log("תשובת Gemini:", cleanText);
 
+    const finalResponse = `id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`;
+
+    // שמירת התשובה במטמון ל-2 דקות כדי למנוע קריסות בקריאה כפולה
+    if (callId) {
+      responseCache.set(callId, finalResponse);
+      setTimeout(() => responseCache.delete(callId), 120000);
+    }
+
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`);
+    return res.send(finalResponse);
 
   } catch (error) {
     console.error("שגיאה בעיבוד מול Gemini:", error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-חלה שגיאה או עומס בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
+    return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
   }
 };
 
