@@ -139,12 +139,13 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    // --- 3. תשובה מ-OpenRouter (דגמים חינמיים) ---
+    // --- 3. תשובה מ-OpenRouter (דגמים חינמיים עדכניים) ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
       const openRouterModels = [
-        "deepseek/deepseek-r1:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "google/gemini-2.0-flash-exp:free"
+        "google/gemini-2.5-flash:free",
+        "meta-llama/llama-3.2-11b-vision-instruct:free",
+        "qwen/qwen-2.5-72b-instruct:free",
+        "mistralai/mistral-7b-instruct:free"
       ];
 
       for (const model of openRouterModels) {
@@ -188,10 +189,10 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- 4. Fallback - Gemini (עם תמיכה ברוטציית מפתחות) ---
+    // --- 4. Fallback - Gemini ---
     if (!finalAnswerText && geminiKeys.length > 0) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash"];
+      const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
       const promptText = `אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. השאלה שנשאלה: "${transcribedText}"`;
 
