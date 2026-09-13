@@ -8,6 +8,40 @@ app.use(express.json({ limit: "50mb" }));
 
 const processedCalls = new Map();
 
+// --- 1. נתיבי Ping עבור UptimeRobot למניעת הרדמת השרת ---
+app.get("/ping", (req, res) => {
+  res.status(200).send("PONG");
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date() });
+});
+
+// פונקציית עזר לקריאות מול Gemini עם מנגנון Retry לשגיאות 429
+const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2) => {
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios.post(geminiUrl, payload, { 
+        headers: { "Content-Type": "application/json" }, 
+        timeout: 10000 
+      });
+      return response;
+    } catch (err) {
+      const status = err.response?.status;
+      
+      if (status === 429 && attempt < maxRetries) {
+        const delay = 2000 * attempt; 
+        console.warn(`[Gemini 429] חריגת מכסה בדגם ${model}. מנסה שוב בעוד ${delay / 1000} שניות (ניסיון ${attempt}/${maxRetries})...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+};
+
 const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
@@ -62,7 +96,7 @@ const handleAudioRequest = async (req, res) => {
 
     let transcribedText = "";
 
-    // --- 1. תמלול ב-Groq Whisper ---
+    // --- 2. תמלול ב-Groq Whisper ---
     if (groqApiKey) {
       try {
         console.log("[Groq] מתחיל תמלול שמע ב-Whisper...");
@@ -99,9 +133,9 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    // --- 2. תשובה מ-Groq Llama ---
+    // --- 3. תשובה מ-Groq Llama ---
     if (groqApiKey && transcribedText.trim().length > 0) {
-      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      const groqModels = ["llama3-8b-8192"];
 
       for (const model of groqModels) {
         try {
@@ -142,10 +176,10 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- 3. Fallback - Gemini ---
+    // --- 4. Fallback - Gemini (עם Retry) ---
     if (!finalAnswerText && geminiApiKey) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const geminiModels = ["gemini-2.5-flash", "gemini-1.5-flash"];
+      const geminiModels = ["gemini-2.5-flash", "gemini-1.5-flash-8b"];
 
       const payload = transcribedText
         ? { contents: [{ role: "user", parts: [{ text: `ענה בעברית קצרה: "${transcribedText}"` }] }] }
@@ -154,10 +188,9 @@ const handleAudioRequest = async (req, res) => {
       for (const model of geminiModels) {
         try {
           console.log(`[Gemini] מנסה דגם: ${model}...`);
-          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-          const response = await axios.post(geminiUrl, payload, { headers: { "Content-Type": "application/json" }, timeout: 10000 });
+          const response = await callGeminiWithRetry(model, payload, geminiApiKey);
 
-          if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+          if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
             finalAnswerText = response.data.candidates[0].content.parts[0].text;
             console.log(`[Gemini] התקבלה תשובה מדגם ${model}!`);
             break;
