@@ -243,7 +243,8 @@ const cleanText = finalAnswerText
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`);
+    // החזרה ישירה לתיקיית ההקלטה הראשית (SHM)
+return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${primaryFolder}`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
