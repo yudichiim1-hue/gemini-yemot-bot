@@ -1,6 +1,5 @@
 const express = require("express");
 const axios = require("axios");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
 
@@ -16,31 +15,28 @@ const handleAudioRequest = async (req, res) => {
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const primaryFolder = params.SHM || "2";
     const secondaryFolder = params.SHL || "1";
-    const modelName = params.MODEL || "gemini-1.5-flash"; // דגם נתמך ויציב
-    const apiKey = process.env.GEMINI_API_KEY || params.API || params.KEY2;
+    const modelName = params.MODEL || "gemini-2.5-flash";
+    
+    // משיכת המפתח שהעברת
+    const apiKey = params.API || params.KEY2 || process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      console.error("שגיאה: לא הוגדר GEMINI_API_KEY");
+      console.error("שגיאה: לא הועבר מפתח");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-מפתח ה-API של ג'מיני חסר&go_to_folder=/${secondaryFolder}`);
+      return res.send(`id_list_message=t-חסר מפתח גישה&go_to_folder=/${secondaryFolder}`);
     }
 
     let audioBuffer = null;
     const possiblePaths = [];
 
-    // 1. זיהוי נתיב הקובץ שהועבר מימות המשיח
     if (params.path) possiblePaths.push(params.path);
     if (params.file) possiblePaths.push(params.file);
-    if (params.filePath) possiblePaths.push(params.filePath);
-    if (params.ApiPath) possiblePaths.push(params.ApiPath);
-    if (params.ApiFile) possiblePaths.push(params.ApiFile);
 
-    // 2. ברירות מחדל במידה ולא נשלח נתיב ישיר
-    possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
-    possiblePaths.push(`/Transcription/last.wav`);
+    possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
+    possiblePaths.push(`ivr2:/1/last.wav`);
 
-    // ניסיון הורדת השמע
+    // הורדת השמע מימות המשיח
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
@@ -65,36 +61,57 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
     }
 
-    // 3. חיבור מתוקן ל-Gemini דרך GoogleGenerativeAI
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: modelName });
+    console.log(`שולח ל-Gemini REST API עם האסימון...`);
 
-    console.log(`שולח ל-Gemini (${modelName})...`);
+    // שליחה ישירה ב-REST API עם Authorization Bearer
+    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
-    const result = await model.generateContent([
-      "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תווים מיוחדים.",
-      {
-        inlineData: {
-          mimeType: "audio/wav",
-          data: audioBuffer.toString("base64")
+    const payload = {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים). אל תשתמש באימוג'ים או תווים מיוחדים."
+            },
+            {
+              inlineData: {
+                mimeType: "audio/wav",
+                data: audioBuffer.toString("base64")
+              }
+            }
+          ]
         }
-      }
-    ]);
+      ]
+    };
 
-    const response = await result.response;
-    const rawText = response.text() || "לא התקבלה תשובה";
+    // שליחה - תמיכה גם ב-Bearer Token וגם ב-key במידת הצורך
+    const headers = {
+      "Content-Type": "application/json"
+    };
+
+    if (apiKey.startsWith("AIzaSy")) {
+      // API Key רגיל
+    } else {
+      // אסימון OAuth / Access Token
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+
+    const geminiUrl = apiKey.startsWith("AIzaSy") ? `${geminiEndpoint}?key=${apiKey}` : geminiEndpoint;
+
+    const response = await axios.post(geminiUrl, payload, { headers });
+
+    const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "לא התקבלה תשובה";
     const cleanText = rawText.replace(/["'\n\r&?=<>/]/g, " ").trim();
     console.log("תשובת Gemini:", cleanText);
 
-    // החזרת תשובה קולית והעברת השיחה לשלוחה הבאה
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/${secondaryFolder}`);
 
   } catch (error) {
-    console.error("שגיאה כללית בעיבוד:", error.message);
-    const fallbackFolder = req.query.SHL || req.body.SHL || "1";
+    console.error("שגיאה בעיבוד מול Gemini:", error.response?.data || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/${fallbackFolder}`);
+    return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
   }
 };
 
