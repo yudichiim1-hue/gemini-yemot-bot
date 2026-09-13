@@ -6,7 +6,11 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
+// זיכרון למניעת כפילויות רגעיות
 const processedCalls = new Map();
+
+// זיכרון היסטוריית שיחה לפי מספר טלפון (שומר 10 דקות)
+const conversationHistory = new Map();
 
 // --- 1. נתיבי Ping עבור UptimeRobot ---
 app.get("/ping", (req, res) => {
@@ -45,25 +49,27 @@ const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
     const callId = params.ApiCallId || params.ApiYFCallId;
+    const userPhone = params.ApiPhone || params.phone || "default_user";
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
     console.log("\n==========================================");
     console.log("--- קריאה חדשה התקבלה ---");
     console.log("Call ID:", callId);
+    console.log("Phone:", userPhone);
 
+    // מניעת כפילויות רגעיות
     if (callId && processedCalls.has(callId)) {
-      console.log(`[Cache] קריאה כפולה זוהתה עבור ${callId}, מחזיר מעבר שקט.`);
+      console.log(`[Cache] קריאה כפולה זוהתה עבור ${callId}, מחזיר מעבר שקט לשלוחה /1.`);
       processedCalls.delete(callId);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`read=t-מקליט=f-1-1,no,1,7,7,no,yes,no`);
+      return res.send(`go_to_folder=/1`);
     }
 
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const groqApiKey = (process.env.GROQ_API_KEY || "").trim();
     const openRouterApiKey = (process.env.OPENROUTER_API_KEY || "").trim();
     
-    // מערך מפתחות Gemini - תמיכה במפתח ראשי ובמפתח משני
     const geminiKeys = [
       (process.env.GEMINI_API_KEY || "").trim(),
       (process.env.GEMINI_API_KEY_1 || "").trim()
@@ -96,7 +102,7 @@ const handleAudioRequest = async (req, res) => {
     if (!audioBuffer) {
       console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`read=t-לא נמצאה הקלטה תקינה אנא הקלט שוב=f-1-1,no,1,7,7,no,yes,no`);
+      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -137,26 +143,37 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
+    // --- טעינה ועדכון של היסטוריית השיחה ---
+    let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
+    
+    // איפוס הטיימר של 10 דקות בכל הודעה חדשה
+    if (userSession.timer) clearTimeout(userSession.timer);
+    userSession.timer = setTimeout(() => {
+      console.log(`[History] עברו 10 דקות, מוחק היסטוריית שיחה עבור ${userPhone}`);
+      conversationHistory.delete(userPhone);
+    }, 10 * 60 * 1000); // 10 דקות
+
     let finalAnswerText = "";
 
-    // --- 3. תשובה מ-OpenRouter (שילוב הנתיב החינמי האוטומטי) ---
+    // הכנת מערך ההודעות הכולל את היסטוריית השיחה
+    const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
+
+    // --- 3. תשובה מ-OpenRouter (שילוב היסטוריה) ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
       try {
-        console.log("[OpenRouter] שולח בקשה לנתיב החינמי האוטומטי (openrouter/free)...");
+        console.log("[OpenRouter] שולח בקשה עם היסטוריית שיחה ל-openrouter/free...");
+
+        const messagesPayload = [
+          { role: "system", content: systemInstruction },
+          ...userSession.history,
+          { role: "user", content: transcribedText }
+        ];
+
         const openRouterCompletion = await axios.post(
           "https://openrouter.ai/api/v1/chat/completions",
           {
             model: "openrouter/free",
-            messages: [
-              {
-                role: "system",
-                content: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים."
-              },
-              {
-                role: "user",
-                content: transcribedText
-              }
-            ],
+            messages: messagesPayload,
             temperature: 0.6
           },
           {
@@ -172,23 +189,44 @@ const handleAudioRequest = async (req, res) => {
 
         finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
         if (finalAnswerText) {
-          console.log("[OpenRouter] התקבלה תשובה בהצלחה מ-openrouter/free!");
+          console.log("[OpenRouter] התקבלה תשובה בהצלחה!");
         }
       } catch (err) {
         console.error("[OpenRouter שגיאה]:", err.response?.status, err.response?.data || err.message);
       }
     }
 
-    // --- 4. Fallback - Gemini ---
+    // --- 4. Fallback - Gemini (שילוב היסטוריה) ---
     if (!finalAnswerText && geminiKeys.length > 0) {
-      console.log("[Gemini] מפעיל גיבוי מול גוגל...");
+      console.log("[Gemini] מפעיל גיבוי מול גוגל עם היסטוריית שיחה...");
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
-      const promptText = `אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. השאלה שנשאלה: "${transcribedText}"`;
+      // המרת ההיסטוריה לפורמט Gemini
+      const geminiContents = [
+        { role: "user", parts: [{ text: systemInstruction }] },
+        { role: "model", parts: [{ text: "מבין, אענה בקצרה בהתאם להנחיות ובהתבסס על ההיסטוריה." }] }
+      ];
 
-      const payload = transcribedText
-        ? { contents: [{ role: "user", parts: [{ text: promptText }] }] }
-        : { contents: [{ role: "user", parts: [{ text: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה וקצרה בלבד." }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] }] };
+      userSession.history.forEach((msg) => {
+        geminiContents.push({
+          role: msg.role === "assistant" ? "model" : "user",
+          parts: [{ text: msg.content }]
+        });
+      });
+
+      if (transcribedText) {
+        geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
+      } else {
+        geminiContents.push({
+          role: "user",
+          parts: [
+            { text: "ענה בקצרה בהתאם להקלטה:" },
+            { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }
+          ]
+        });
+      }
+
+      const payload = { contents: geminiContents };
 
       keyLoop:
       for (let i = 0; i < geminiKeys.length; i++) {
@@ -218,25 +256,34 @@ const handleAudioRequest = async (req, res) => {
 
     // --- 5. ניקוי מוחלט של סימני פיסוק, ניקוד ותווים מיוחדים ---
     const cleanText = finalAnswerText
-      .replace(/[a-zA-Z]/g, "")                             // הסרת אותיות באנגלית
-      .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") // הסרת כל סימני הפיסוק והתווים המיוחדים
-      .replace(/\d+\./g, "")                                 // הסרת מספרי רשימות
-      .replace(/\s+/g, " ")                                 // איחוד רווחים כפולים
+      .replace(/[a-zA-Z]/g, "")                             
+      .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
+      .replace(/\d+\./g, "")                                 
+      .replace(/\s+/g, " ")                                 
       .trim();
 
     console.log("תשובה סופית נקייה:", cleanText);
 
-    if (callId) {
-      processedCalls.set(callId, true);
-      setTimeout(() => processedCalls.delete(callId), 120000);
+    // שמירת התגובה והתמלול הנוכחי בהיסטוריה של המשתמש
+    if (transcribedText) {
+      userSession.history.push({ role: "user", content: transcribedText });
+      userSession.history.push({ role: "assistant", content: cleanText });
+      conversationHistory.set(userPhone, userSession);
     }
 
+    if (callId) {
+      processedCalls.set(callId, true);
+      setTimeout(() => processedCalls.delete(callId), 5000);
+    }
+
+    res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
+
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`read=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית=f-1-1,no,1,7,7,no,yes,no`);
+    return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
   }
 };
 
