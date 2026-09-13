@@ -18,7 +18,7 @@ app.get("/health", (req, res) => {
 });
 
 // פונקציית עזר לקריאות מול Gemini עם מנגנון Retry לשגיאות 429
-const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2) => {
+const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 3) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -32,7 +32,7 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2)
       const status = err.response?.status;
       
       if (status === 429 && attempt < maxRetries) {
-        const delay = 2000 * attempt; 
+        const delay = 3000 * attempt; 
         console.warn(`[Gemini 429] חריגת מכסה בדגם ${model}. מנסה שוב בעוד ${delay / 1000} שניות (ניסיון ${attempt}/${maxRetries})...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
@@ -133,7 +133,7 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    // --- 3. תשובה מ-Groq Llama (דגמים עדכניים) ---
+    // --- 3. תשובה מ-Groq Llama ---
     if (groqApiKey && transcribedText.trim().length > 0) {
       const groqModels = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
 
@@ -176,10 +176,10 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- 4. Fallback - Gemini (עם דגמים מעודכנים ו-Retry) ---
+    // --- 4. Fallback - Gemini (עדכון דגמים מעודכנים ב-v1beta) ---
     if (!finalAnswerText && geminiApiKey) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash"];
+      const geminiModels = ["gemini-3.6-flash", "gemini-1.5-flash"];
 
       const payload = transcribedText
         ? { contents: [{ role: "user", parts: [{ text: `ענה בעברית קצרה: "${transcribedText}"` }] }] }
@@ -224,7 +224,7 @@ const handleAudioRequest = async (req, res) => {
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
-    res.set("Content-Type", "text/plain; charset=utf-8");
+    res.set("Content-Type",="text/plain; charset=utf-8");
     return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
   }
 };
