@@ -135,7 +135,7 @@ const handleAudioRequest = async (req, res) => {
 
     // --- 3. תשובה מ-Groq Llama ---
     if (groqApiKey && transcribedText.trim().length > 0) {
-      const groqModels = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
+      const groqModels = ["llama-3.2-3b-preview", "llama3-8b-8192"];
 
       for (const model of groqModels) {
         try {
@@ -147,7 +147,7 @@ const handleAudioRequest = async (req, res) => {
               messages: [
                 {
                   role: "system",
-                  content: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים רציפים). אל תשתמש באימוג'ים, מקפים או סימני פיסוק מיוחדים."
+                  content: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים."
                 },
                 {
                   role: "user",
@@ -176,14 +176,16 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- 4. Fallback - Gemini (עדכון דגמים מעודכנים ב-v1beta) ---
+    // --- 4. Fallback - Gemini ---
     if (!finalAnswerText && geminiApiKey) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const geminiModels = ["gemini-3.6-flash", "gemini-1.5-flash"];
+      const geminiModels = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash"];
+
+      const promptText = `אתה עוזר קולי בטלפון. ענה בעברית בלבד, רציף וקולח, ללא רשימות, ללא מספרים, ללא סוגריים וללא אנגלית. שאלה: "${transcribedText}"`;
 
       const payload = transcribedText
-        ? { contents: [{ role: "user", parts: [{ text: `ענה בעברית קצרה: "${transcribedText}"` }] }] }
-        : { contents: [{ role: "user", parts: [{ text: "ענה בעברית קצרה" }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] }] };
+        ? { contents: [{ role: "user", parts: [{ text: promptText }] }] }
+        : { contents: [{ role: "user", parts: [{ text: "ענה בעברית פשוטה וקצרה בלבד" }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] }] };
 
       for (const model of geminiModels) {
         try {
@@ -205,9 +207,12 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיף ספק (Groq / Gemini).");
     }
 
+    // ניקוי מתקדם של תוים ומבנים המפריעים ל-TTS
     const cleanText = finalAnswerText
-      .replace(/[*_~`#\-–—]/g, " ")
-      .replace(/["'\n\r&?=<>/()\\[\]{}]/g, " ")
+      .replace(/[a-zA-Z]/g, "") // הסרת אנגלית
+      .replace(/[*_~`#\-–—:]/g, " ")
+      .replace(/["'\n\r&?=<>/()\\[\]{}]./g, " ")
+      .replace(/\d+\./g, "") // הסרת מספרי רשימה כמו 1. 2.
       .replace(/\s+/g, " ")
       .trim();
 
@@ -224,7 +229,7 @@ const handleAudioRequest = async (req, res) => {
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
-   res.set("Content-Type", "text/plain; charset=utf-8");
+    res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה אנא נסה שנית&go_to_folder=/1`);
   }
 };
