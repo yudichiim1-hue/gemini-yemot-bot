@@ -103,6 +103,7 @@ const handleAudioRequest = async (req, res) => {
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3-turbo\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
+        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nתמלל בעברית בלבד ובאותיות עבריות.\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`;
         const formDataFooter = `\r\n--${boundary}--\r\n`;
 
@@ -135,7 +136,7 @@ const handleAudioRequest = async (req, res) => {
 
     // --- 3. תשובה מ-Groq Llama ---
     if (groqApiKey && transcribedText.trim().length > 0) {
-      const groqModels = ["llama-3.1-8b-instant", "llama3-70b-8192"];
+      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
 
       for (const model of groqModels) {
         try {
@@ -179,7 +180,7 @@ const handleAudioRequest = async (req, res) => {
     // --- 4. Fallback - Gemini ---
     if (!finalAnswerText && geminiApiKey) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const geminiModels = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash"];
+      const geminiModels = ["gemini-2.5-flash", "gemini-1.5-flash"];
 
       const promptText = `אתה עוזר קולי בטלפון. ענה בעברית בלבד, רציף וקולח, ללא רשימות, ללא מספרים, ללא סוגריים וללא אנגלית. שאלה: "${transcribedText}"`;
 
@@ -207,7 +208,7 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיש ספק (Groq / Gemini).");
     }
 
-    // ניקוי מוחלט של תוים מיוחדים לקריאה נקייה בימות המשיח
+    // ניקוי מוחלט של תווים מיוחדים לקריאה נקייה בימות המשיח
     const cleanText = finalAnswerText
       .replace(/[a-zA-Z]/g, "")                 // הסרת אותיות באנגלית
       .replace(/[*_~`#\-–—:]/g, " ")             // הסרת כותרות, מקפים ונקודתיים
