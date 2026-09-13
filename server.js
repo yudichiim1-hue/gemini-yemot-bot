@@ -141,13 +141,11 @@ const handleAudioRequest = async (req, res) => {
 
     // --- 3. תשובה מ-OpenRouter (דגמים חינמיים עדכניים) ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
-            const openRouterModels = [
+      const openRouterModels = [
         "google/gemini-2.0-flash-exp:free",
         "meta-llama/llama-3.1-8b-instruct:free",
         "mistralai/mistral-small-24b-instruct-2501:free",
         "qwen/qwen-2.5-7b-instruct:free"
-      ];
-
       ];
 
       for (const model of openRouterModels) {
@@ -194,7 +192,6 @@ const handleAudioRequest = async (req, res) => {
     // --- 4. Fallback - Gemini ---
     if (!finalAnswerText && geminiKeys.length > 0) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      // העברת flash-lite לראש התור למניעת חריגת מכסה (429)
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
       const promptText = `אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. השאלה שנשאלה: "${transcribedText}"`;
