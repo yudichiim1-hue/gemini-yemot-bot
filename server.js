@@ -30,10 +30,6 @@ const handleAudioRequest = async (req, res) => {
     const groqApiKey = (process.env.GROQ_API_KEY || "").trim();
     const geminiApiKey = (process.env.GEMINI_API_KEY || "").trim();
 
-    console.log("סטטוס מפתחות:");
-    console.log("- GROQ_API_KEY קיים?", !!groqApiKey, groqApiKey ? `(מתחיל ב: ${groqApiKey.substring(0, 4)}...)` : "");
-    console.log("- GEMINI_API_KEY קיים?", !!geminiApiKey);
-
     let audioBuffer = null;
     const possiblePaths = [];
 
@@ -47,7 +43,6 @@ const handleAudioRequest = async (req, res) => {
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
-        console.log("מנסה להוריד מנתיב:", cleanPath);
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 7000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
@@ -55,19 +50,19 @@ const handleAudioRequest = async (req, res) => {
           break;
         }
       } catch (err) {
-        console.log(`[כישלון] לא נמצא קובץ בנתיב ${cleanPath}`);
+        // התעלם מנתיבים שאינם קיימים
       }
     }
 
     if (!audioBuffer) {
-      console.error("[שגיאה קריטית] לא נמצאה הקלטה תקינה באף נתיב.");
+      console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/${secondaryFolder}`);
     }
 
     let transcribedText = "";
 
-    // --- 1. ניסיון תמלול ב-Groq ---
+    // --- 1. תמלול ב-Groq Whisper ---
     if (groqApiKey) {
       try {
         console.log("[Groq] מתחיל תמלול שמע ב-Whisper...");
@@ -104,54 +99,59 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    // --- 2. ניסיון תשובה מ-Groq Llama ---
+    // --- 2. תשובה מ-Groq Llama (שמות מודלים תקינים) ---
     if (groqApiKey && transcribedText.trim().length > 0) {
-      try {
-        console.log("[Groq] שולח שאלה ל-Llama 3.3...");
-        const groqCompletion = await axios.post(
-          "https://api.groq.com/openai/v1/chat/completions",
-          {
-            model: "llama-3.3-70b-versatile",
-            messages: [
-              {
-                role: "system",
-                content: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים רציפים). אל תשתמש באימוג'ים, מקפים או סימני פיסוק מיוחדים."
-              },
-              {
-                role: "user",
-                content: transcribedText
-              }
-            ],
-            temperature: 0.6
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${groqApiKey}`,
-              "Content-Type": "application/json"
-            },
-            timeout: 8000
-          }
-        );
+      const groqModels = ["llama3-70b-8192", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
 
-        finalAnswerText = groqCompletion.data?.choices?.[0]?.message?.content || "";
-        if (finalAnswerText) {
-          console.log("[Groq] התקבלה תשובה מ-Llama!");
+      for (const model of groqModels) {
+        try {
+          console.log(`[Groq] מנסה דגם שפה: ${model}...`);
+          const groqCompletion = await axios.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            {
+              model: model,
+              messages: [
+                {
+                  role: "system",
+                  content: "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה, קצרה וברורה (עד 2 משפטים רציפים). אל תשתמש באימוג'ים, מקפים או סימני פיסוק מיוחדים."
+                },
+                {
+                  role: "user",
+                  content: transcribedText
+                }
+              ],
+              temperature: 0.6
+            },
+            {
+              headers: {
+                "Authorization": `Bearer ${groqApiKey}`,
+                "Content-Type": "application/json"
+              },
+              timeout: 8000
+            }
+          );
+
+          finalAnswerText = groqCompletion.data?.choices?.[0]?.message?.content || "";
+          if (finalAnswerText) {
+            console.log(`[Groq] התקבלה תשובה מ-Groq (${model})!`);
+            break;
+          }
+        } catch (err) {
+          console.error(`[Groq שגיאה בדגם ${model}]:`, err.response?.status, err.response?.data || err.message);
         }
-      } catch (err) {
-        console.error("[Groq שגיאת Llama]:", err.response?.status, err.response?.data || err.message);
       }
     }
 
-    // --- 3. Fallback - Gemini ---
+    // --- 3. Fallback - Gemini (שמות מודלים תקינים) ---
     if (!finalAnswerText && geminiApiKey) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל...");
-      const modelsToTry = ["gemini-2.5-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash"];
+      const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash-latest"];
 
       const payload = transcribedText
         ? { contents: [{ role: "user", parts: [{ text: `ענה בעברית קצרה: "${transcribedText}"` }] }] }
         : { contents: [{ role: "user", parts: [{ text: "ענה בעברית קצרה" }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] }] };
 
-      for (const model of modelsToTry) {
+      for (const model of geminiModels) {
         try {
           console.log(`[Gemini] מנסה דגם: ${model}...`);
           const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
