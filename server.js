@@ -35,7 +35,7 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2)
     try {
       const response = await axios.post(geminiUrl, payload, { 
         headers: { "Content-Type": "application/json" }, 
-        timeout: 7000 
+        timeout: 9000 
       });
       return response;
     } catch (err) {
@@ -106,7 +106,6 @@ const handleAudioRequest = async (req, res) => {
 
     let transcribedText = "";
 
-    // תמלול ראשוני ב-Groq Whisper
     if (groqApiKey) {
       try {
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
@@ -135,12 +134,9 @@ const handleAudioRequest = async (req, res) => {
         );
 
         transcribedText = (transcriptionResponse.data?.text || "").trim();
-      } catch (err) {
-        console.error("[Groq Error]:", err.message);
-      }
+      } catch (err) {}
     }
 
-    // בדיקת איפוס שיחה
     const lowerTranscription = transcribedText.toLowerCase();
     const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
 
@@ -161,9 +157,9 @@ const handleAudioRequest = async (req, res) => {
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
 
-    // --- עדיפות 1: Gemini (אם התמלול של גרוק חלש, נותנים לגימיני לשמוע קול, אחרת שולחים טקסט עם היסטוריה) ---
+    // --- Gemini עם חיבור חינמי לחיפוש של גוגל (Google Search Grounding) ---
     if (geminiKeys.length > 0) {
-      console.log("[Gemini] מפעיל עדיפות ראשונה מול גוגל...");
+      console.log("[Gemini + Search] מפעיל גישה לחיפוש גוגל מול גוגל...");
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
       const geminiContents = [
@@ -179,7 +175,6 @@ const handleAudioRequest = async (req, res) => {
       });
 
       if (isGroqTranscriptionWeak) {
-        console.log("[Gemini Smart Fallback] התמלול של גרוק חלש, שולח את השמע ישירות לגימיני...");
         geminiContents.push({
           role: "user",
           parts: [
@@ -191,7 +186,11 @@ const handleAudioRequest = async (req, res) => {
         geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
       }
 
-      const payload = { contents: geminiContents };
+      // הוספת כלי החיפוש של גוגל בחינם לבקשה
+      const payload = {
+        contents: geminiContents,
+        tools: [{ googleSearch: {} }]
+      };
 
       keyLoop:
       for (let i = 0; i < geminiKeys.length; i++) {
@@ -202,7 +201,6 @@ const handleAudioRequest = async (req, res) => {
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               if (isGroqTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
-              console.log(`[Gemini הצלחה] התקבלה תשובה מדגם ${model}!`);
               break keyLoop;
             }
           } catch (err) {}
@@ -210,10 +208,9 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- עדיפות 2 (גיבוי): OpenRouter (אם Gemini לא הגיב מסיבה כלשהי ויש טקסט מתומלל) ---
+    // גיבוי OpenRouter
     if (!finalAnswerText && openRouterApiKey && transcribedText.length > 0 && !isGroqTranscriptionWeak) {
       try {
-        console.log("[OpenRouter Backup] מפעיל גיבוי מול OpenRouter...");
         const messagesPayload = [
           { role: "system", content: systemInstruction },
           ...userSession.history,
@@ -227,12 +224,7 @@ const handleAudioRequest = async (req, res) => {
         );
 
         finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-        if (finalAnswerText) {
-          console.log("[OpenRouter הצלחה] התקבלה תשובה משרת הגיבוי!");
-        }
-      } catch (err) {
-        console.warn("[OpenRouter שגיאת גיבוי]:", err.message);
-      }
+      } catch (err) {}
     }
 
     if (!finalAnswerText) {
