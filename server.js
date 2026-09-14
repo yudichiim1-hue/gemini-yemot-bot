@@ -1,6 +1,5 @@
 const express = require("express");
 const axios = require("axios");
-const { MsEdgeTTS, OUTPUT_FORMAT } = require("edge-tts");
 const fs = require("fs");
 const path = require("path");
 
@@ -9,16 +8,16 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
-// יצירת תיקיית קובצי שמע אם אינה קיימת
+// תיקייה לשמירת קובצי השמע של ElevenLabs
 const audioDir = path.join(__dirname, "audio");
 if (!fs.existsSync(audioDir)) {
   fs.mkdirSync(audioDir);
 }
 
-// הגשת קובצי שמע סטטיים עבור ימות המשיח
+// הגשת קובצי השמע באופן ציבורי עבור ימות המשיח
 app.use("/audio", express.static(audioDir));
 
-// זיכרון למניעת כפילויות והיסטוריה
+// זיכרון לשיחות והיסטוריה
 const processedCalls = new Map();
 const conversationHistory = new Map();
 
@@ -28,12 +27,16 @@ const RESET_TRIGGERS = [
   "תמחק היסטוריה", "ניקוי היסטוריה"
 ];
 
-// --- 1. יצירת שמע ב-ElevenLabs ---
+// --- יצירת קובץ שמע ב-ElevenLabs ---
 const generateElevenLabsTTS = async (text, filePath, apiKey) => {
-  if (!apiKey) return false;
+  if (!apiKey) {
+    console.log("[TTS] לא מוגדר מפתח ElevenLabs");
+    return false;
+  }
+  
   try {
-    // מזהה קול מומלץ בעברית (ניתן להחליף ב-Voice ID לפי בחירתך)
-    const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; 
+    // קול ברירת מחדל: Aria (נשי וטבעי מאוד בעברית). ניתן לשינוי דרך משתני הסביבה
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || "9BWtsm13b0A823eC22fA"; 
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
     const response = await axios.post(
@@ -49,7 +52,7 @@ const generateElevenLabsTTS = async (text, filePath, apiKey) => {
           "Content-Type": "application/json"
         },
         responseType: "arraybuffer",
-        timeout: 10000
+        timeout: 12000
       }
     );
 
@@ -57,52 +60,18 @@ const generateElevenLabsTTS = async (text, filePath, apiKey) => {
     console.log("[TTS] נוצר בהצלחה באמצעות ElevenLabs!");
     return true;
   } catch (err) {
-    console.warn(`[ElevenLabs Fallback] נכשל או שנגמרה המכסה: ${err.response?.status || err.message}`);
+    console.warn(`[ElevenLabs Error]: ${err.response?.status || err.message}`);
     return false;
   }
 };
 
-// --- 2. יצירת שמע ב-Edge TTS (גיבוי חינמי ללא הגבלה) ---
-const generateEdgeTTS = async (text, filePath) => {
-  try {
-    const tts = new MsEdgeTTS();
-    // קול זכר טבעי בעברית: he-IL-AvriNeural (או נקבה: he-IL-HilaNeural)
-    await tts.setMetadata("he-IL-AvriNeural", OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-    const stream = tts.stream(text);
-    const outStream = fs.createWriteStream(filePath);
-
-    stream.pipe(outStream);
-
-    return new Promise((resolve, reject) => {
-      outStream.on("finish", () => {
-        console.log("[TTS] נוצר בהצלחה באמצעות Edge TTS!");
-        resolve(true);
-      });
-      outStream.on("error", (err) => {
-        console.error("[Edge TTS Error]:", err);
-        reject(false);
-      });
-    });
-  } catch (err) {
-    console.error("[Edge TTS Exception]:", err.message);
-    return false;
-  }
-};
-
-// --- 3. פונקציית TTS משולבת (ElevenLabs -> Edge TTS) ---
+// --- יצירת תגובת שמע ---
 const createAudioResponse = async (text, callId, req) => {
   const filename = `speech_${callId || Date.now()}_${Math.floor(Math.random() * 1000)}.mp3`;
   const filePath = path.join(audioDir, filename);
   const elevenKey = (process.env.ELEVENLABS_API_KEY || "").trim();
 
-  // ניסיון ראשון: ElevenLabs
-  let success = await generateElevenLabsTTS(text, filePath, elevenKey);
-
-  // ניסיון שני: Edge TTS במידה ו-ElevenLabs נכשל או נגמרה המכסה
-  if (!success) {
-    console.log("[TTS] עובר לגיבוי Edge TTS...");
-    success = await generateEdgeTTS(text, filePath);
-  }
+  const success = await generateElevenLabsTTS(text, filePath, elevenKey);
 
   if (success) {
     const protocol = req.headers["x-forwarded-proto"] || "https";
@@ -113,7 +82,7 @@ const createAudioResponse = async (text, callId, req) => {
   return null;
 };
 
-// פונקציית עזר לפורמט טקסט
+// ניקוי פורמט הטקסט עבור ימות המשיח / TTS
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
@@ -193,7 +162,7 @@ const handleAudioRequest = async (req, res) => {
 
     let transcribedText = "";
 
-    // תמלול ב-Groq
+    // תמלול דרך Groq Whisper
     if (groqApiKey) {
       try {
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
@@ -294,10 +263,10 @@ const handleAudioRequest = async (req, res) => {
     res.set("Content-Type", "text/plain; charset=utf-8");
 
     if (audioUrl) {
-      console.log(`[Response] שולח נגן קובץ שמע: ${audioUrl}`);
+      console.log(`[Response] שולח נגן קובץ שמע מ-ElevenLabs: ${audioUrl}`);
       return res.send(`id_list_message=f-${audioUrl}&go_to_folder=/1`);
     } else {
-      console.log("[Response] TTS נכשל, חוזר להקראה טקסטואלית.");
+      console.log("[Response] TTS נכשל או שלא מוגדר מפתח, חוזר להקראה של ימות המשיח.");
       return res.send(`id_list_message=t-${cleanAnswer}&go_to_folder=/1`);
     }
 
