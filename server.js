@@ -6,13 +6,9 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
-// זיכרון למניעת כפילויות רגעיות
 const processedCalls = new Map();
-
-// זיכרון היסטוריית שיחה לפי מספר טלפון (שומר 10 דקות)
 const conversationHistory = new Map();
 
-// ביטויי איפוס שיחה
 const RESET_TRIGGERS = [
   "תתחיל מחדש",
   "תתחילי מחדש",
@@ -24,7 +20,6 @@ const RESET_TRIGGERS = [
   "ניקוי היסטוריה"
 ];
 
-// --- 1. נתיבי Ping עבור UptimeRobot ---
 app.get("/ping", (req, res) => {
   res.status(200).send("PONG");
 });
@@ -33,7 +28,6 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date() });
 });
 
-// פונקציית עזר לקריאות מול Gemini עם מנגנון Retry
 const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 1) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   
@@ -41,14 +35,13 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 1)
     try {
       const response = await axios.post(geminiUrl, payload, { 
         headers: { "Content-Type": "application/json" }, 
-        timeout: 6000 
+        timeout: 4000 
       });
       return response;
     } catch (err) {
       const status = err.response?.status;
       if (status === 429 && attempt < maxRetries) {
         const delay = 1000 * attempt; 
-        console.warn(`[Gemini 429] חריגת מכסה בדגם ${model}. מנסה שוב בעוד ${delay / 1000} שניות...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
         throw err;
@@ -57,12 +50,11 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 1)
   }
 };
 
-// פונקציית ניקוי אגרסיבית המקורית - משאירה אך ורק אותיות בעברית, מספרים ורווחים
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
-    .replace(/[^א-ת0-9\s]/g, "") // מוחק כל תו שאינו אות בעברית, מספר או רווח
-    .replace(/\s+/g, " ")        // מאחד רווחים כפולים
+    .replace(/[^א-ת0-9\s]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 };
 
@@ -80,9 +72,7 @@ const handleAudioRequest = async (req, res) => {
     console.log("Call ID:", callId);
     console.log("Phone:", userPhone);
 
-    // מניעת כפילויות רגעיות
     if (callId && processedCalls.has(callId)) {
-      console.log(`[Cache] קריאה כפולה זוהתה עבור ${callId}, מחזיר מעבר שקט.`);
       processedCalls.delete(callId);
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
@@ -105,19 +95,19 @@ const handleAudioRequest = async (req, res) => {
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
 
+    // הורדה מהירה מאוד כדי לא לעכב את ימות המשיח
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
-        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 4000 });
+        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 2500 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          console.log(`[הצלחה] הקובץ הורד בהצלחה! גודל: ${audioBuffer.length} bytes`);
           break;
         }
       } catch (err) {
-        // התעלם מנתיבים שאינם קיימים
+        // ממשיך הלאה מיד אם הנתיב נכשל
       }
     }
 
@@ -130,10 +120,8 @@ const handleAudioRequest = async (req, res) => {
 
     let transcribedText = "";
 
-    // --- 2. תמלול ב-Groq Whisper ---
     if (groqApiKey) {
       try {
-        console.log("[Groq] מתחיל תמלול שמע ב-Whisper...");
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3-turbo\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
@@ -155,23 +143,20 @@ const handleAudioRequest = async (req, res) => {
               "Authorization": `Bearer ${groqApiKey}`,
               "Content-Type": `multipart/form-data; boundary=${boundary}`
             },
-            timeout: 5000
+            timeout: 3500
           }
         );
 
         transcribedText = transcriptionResponse.data?.text || "";
-        console.log("[Groq] תמלול עבר בהצלחה:", transcribedText);
       } catch (err) {
-        console.error("[Groq שגיאת תמלול]:", err.response?.status, err.response?.data || err.message);
+        console.error("[Groq שגיאת תמלול]:", err.message);
       }
     }
 
-    // --- בדיקת זיהוי מילות איפוס שיחה ---
     const lowerTranscription = transcribedText.trim().toLowerCase();
     const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
 
     if (isResetRequested) {
-      console.log(`[Reset] זוהתה בקשת איפוס עבור ${userPhone}. מוחק היסטוריה...`);
       const existingSession = conversationHistory.get(userPhone);
       if (existingSession?.timer) clearTimeout(existingSession.timer);
       conversationHistory.delete(userPhone);
@@ -186,24 +171,18 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=m-${encodeURIComponent(resetText)}&go_to_folder=/1`);
     }
 
-    // --- טעינה ועדכון של היסטוריית השיחה ---
     let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
     
     if (userSession.timer) clearTimeout(userSession.timer);
     userSession.timer = setTimeout(() => {
-      console.log(`[History] עברו 10 דקות, מוחק היסטוריית שיחה עבור ${userPhone}`);
       conversationHistory.delete(userPhone);
     }, 10 * 60 * 1000);
 
     let finalAnswerText = "";
-
     const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, ללא סימני פיסוק, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
 
-    // --- 3. תשובה מ-OpenRouter ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
       try {
-        console.log("[OpenRouter] שולח בקשה עם היסטוריית שיחה ל-openrouter/free...");
-
         const messagesPayload = [
           { role: "system", content: systemInstruction },
           ...userSession.history,
@@ -224,24 +203,18 @@ const handleAudioRequest = async (req, res) => {
               "HTTP-Referer": "https://render.com",
               "X-Title": "Yemot Telephony AI"
             },
-            timeout: 6000
+            timeout: 4000
           }
         );
 
         finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-        if (finalAnswerText) {
-          console.log("[OpenRouter] התקבלה תשובה בהצלחה!");
-        }
       } catch (err) {
-        console.error("[OpenRouter שגיאה]:", err.response?.status, err.response?.data || err.message);
+        console.error("[OpenRouter שגיאה]:", err.message);
       }
     }
 
-    // --- 4. Fallback - Gemini ---
     if (!finalAnswerText && geminiKeys.length > 0) {
-      console.log("[Gemini] מפעיל גיבוי מול גוגל עם היסטוריית שיחה...");
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
-
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
         { role: "model", parts: [{ text: "מבין, אענה בקצרה בהתאם להנחיות ובהתבסס על ההיסטוריה." }] }
@@ -271,34 +244,26 @@ const handleAudioRequest = async (req, res) => {
       keyLoop:
       for (let i = 0; i < geminiKeys.length; i++) {
         const apiKey = geminiKeys[i];
-        console.log(`[Gemini] מנסה מפתח API מס' ${i + 1}...`);
-
         for (const model of geminiModels) {
           try {
-            console.log(`[Gemini] מנסה דגם: ${model}...`);
             const response = await callGeminiWithRetry(model, payload, apiKey);
-
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
-              console.log(`[Gemini] התקבלה תשובה מדגם ${model} באמצעות מפתח מס' ${i + 1}!`);
               break keyLoop;
             }
           } catch (err) {
-            console.error(`[Gemini שגיאה במפתח ${i + 1} בדגם ${model}]:`, err.response?.status, err.response?.data || err.message);
+            // ממשיך לנסות מפתח/דגם הבא
           }
         }
       }
     }
 
     if (!finalAnswerText) {
-      throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
+      finalAnswerText = "לא הצלחתי לעבד את הבקשה אנא נסה שנית";
     }
 
-    // --- 5. ניקוי ופורמט טקסט עבור ימות המשיח ---
     const cleanText = formatTextForYemot(finalAnswerText);
-
-    console.log("תשובה מפורמטת להקראה:", cleanText);
-    console.log(`זמן כולל לעיבוד הקריאה: ${Date.now() - startTime}ms`);
+    console.log(`זמן כולל לעיבוד: ${Date.now() - startTime}ms`);
 
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
