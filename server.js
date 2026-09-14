@@ -28,6 +28,7 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date() });
 });
 
+// פונקציית עזר לקריאות מול Gemini עם מנגנון Retry
 const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 1) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   
@@ -35,7 +36,7 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 1)
     try {
       const response = await axios.post(geminiUrl, payload, { 
         headers: { "Content-Type": "application/json" }, 
-        timeout: 12000 
+        timeout: 8000 
       });
       return response;
     } catch (err) {
@@ -100,7 +101,7 @@ const handleAudioRequest = async (req, res) => {
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
-        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 8000 });
+        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 4000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
           break;
@@ -142,7 +143,7 @@ const handleAudioRequest = async (req, res) => {
               "Authorization": `Bearer ${groqApiKey}`,
               "Content-Type": `multipart/form-data; boundary=${boundary}`
             },
-            timeout: 10000
+            timeout: 6000
           }
         );
 
@@ -180,39 +181,9 @@ const handleAudioRequest = async (req, res) => {
     let finalAnswerText = "";
     const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, ללא סימני פיסוק, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
 
-    if (openRouterApiKey && transcribedText.trim().length > 0) {
-      try {
-        const messagesPayload = [
-          { role: "system", content: systemInstruction },
-          ...userSession.history,
-          { role: "user", content: transcribedText }
-        ];
-
-        const openRouterCompletion = await axios.post(
-          "https://openrouter.ai/api/v1/chat/completions",
-          {
-            model: "openrouter/free",
-            messages: messagesPayload,
-            temperature: 0.6
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${openRouterApiKey}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": "https://render.com",
-              "X-Title": "Yemot Telephony AI"
-            },
-            timeout: 12000
-          }
-        );
-
-        finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-      } catch (err) {
-        console.error("[OpenRouter שגיאה]:", err.message);
-      }
-    }
-
+    // --- 1. עדיפות ראשונה: Gemini (מהיר מאוד) ---
     if (!finalAnswerText && geminiKeys.length > 0) {
+      console.log("[Gemini] מפעיל קודם כל מול גוגל...");
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
@@ -248,12 +219,47 @@ const handleAudioRequest = async (req, res) => {
             const response = await callGeminiWithRetry(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
+              console.log(`[Gemini] הצלחה מדגם ${model}!`);
               break keyLoop;
             }
           } catch (err) {
             // ממשיך לנסות מפתח/דגם הבא
           }
         }
+      }
+    }
+
+    // --- 2. עדיפות שניה (גיבוי): OpenRouter ---
+    if (!finalAnswerText && openRouterApiKey && transcribedText.trim().length > 0) {
+      try {
+        console.log("[OpenRouter] משתמש כגיבוי...");
+        const messagesPayload = [
+          { role: "system", content: systemInstruction },
+          ...userSession.history,
+          { role: "user", content: transcribedText }
+        ];
+
+        const openRouterCompletion = await axios.post(
+          "https://openrouter.ai/api/v1/chat/completions",
+          {
+            model: "openrouter/free",
+            messages: messagesPayload,
+            temperature: 0.6
+          },
+          {
+            headers: {
+              "Authorization": `Bearer ${openRouterApiKey}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "https://render.com",
+              "X-Title": "Yemot Telephony AI"
+            },
+            timeout: 8000
+          }
+        );
+
+        finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
+      } catch (err) {
+        console.error("[OpenRouter שגיאה]:", err.message);
       }
     }
 
