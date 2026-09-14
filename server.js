@@ -101,7 +101,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (!audioBuffer) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/1`);
+      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&readkey=go,yes,.,#&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -145,7 +145,7 @@ const handleAudioRequest = async (req, res) => {
       if (existingSession?.timer) clearTimeout(existingSession.timer);
       conversationHistory.delete(userPhone);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-השיחה אופסה בהצלחה במה אוכל לעזור&go_to_folder=/1`);
+      return res.send(`id_list_message=t-השיחה אופסה בהצלחה במה אוכל לעזור&readkey=go,yes,.,#&go_to_folder=/1`);
     }
 
     let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
@@ -154,12 +154,10 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
     
-    // --- הנחיית מערכת מעודכנת שמונעת התנצלויות על חוסר אינטרנט ---
     const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפד והפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     
-    // --- הרחבת תנאי החיפוש: מפעיל חיפוש אוטומטי גם כששואלים על חדשות, מה חדש, עדכונים או "חפש" ---
     const needsSearch = 
       lowerTranscription.startsWith("חפש") || 
       lowerTranscription.startsWith("חפשי") || 
@@ -265,12 +263,12 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
+    return res.send(`id_list_message=t-${cleanText}&readkey=go,yes,.,#&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===", error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-חלה שגיאה אנא נסה שנית&go_to_folder=/1`);
+    return res.send(`id_list_message=t-חלה שגיאה אנא נסה שנית&readkey=go,yes,.,#&go_to_folder=/1`);
   }
 };
 
