@@ -33,15 +33,19 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2)
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      console.log(`[Gemini] שולח בקשה למודל ${model} (ניסיון ${attempt}/${maxRetries})...`);
       const response = await axios.post(geminiUrl, payload, { 
         headers: { "Content-Type": "application/json" }, 
         timeout: 9000 
       });
+      console.log(`[Gemini] התקבלה תשובה בהצלחה ממודל ${model}`);
       return response;
     } catch (err) {
       const status = err.response?.status;
+      console.error(`[Gemini Error] שגיאה במודל ${model} (סטטוס: ${status || 'unknown'}):`, err.message);
       if (status === 429 && attempt < maxRetries) {
         const delay = 1500 * attempt; 
+        console.log(`[Gemini] עומס (429), ממתין ${delay}ms ומנסה שוב...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
         throw err;
@@ -58,12 +62,20 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
-    console.log("\n==========================================");
-    console.log("--- קריאה חדשה התקבלה ---");
-    console.log("Call ID:", callId);
-    console.log("Phone:", userPhone);
+    // --- לוג מפורט מאוד של פרטי ההתקשרות ומערכת ימות המשיח ---
+    console.log("\n==================================================");
+    console.log("📞 [ימות המשיח] התקבלה פנייה חדשה מהמערכת!");
+    console.log("--------------------------------------------------");
+    console.log(`📌 מספר טלפון מתקשר (ApiPhone): ${params.ApiPhone || params.phone || 'לא זוהה'}`);
+    console.log(`🆔 מזהה שיחה ייחודי (CallId): ${callId || 'לא זוהה'}`);
+    console.log(`📂 תיקייה ראשית (SHM): ${primaryFolder}`);
+    console.log(`📂 תיקייה משנית/קודמת (SHL): ${secondaryFolder}`);
+    console.log(`🌐 כתובת קובץ שהועברה (path/file): ${params.path || params.file || 'לא הועבר, יחפש לפי ברירת מחדל'}`);
+    console.log("📋 כל הפרמטרים שהתקבלו מהמערכת:", JSON.stringify(params, null, 2));
+    console.log("==================================================\n");
 
     if (callId && processedCalls.has(callId)) {
+      console.log(`[Duplicate Call] שיחה כפולה זוהתה עבור Call ID: ${callId}. מדלג ומחזיר ניתוב לתיקייה /1.`);
       processedCalls.delete(callId);
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
@@ -86,20 +98,27 @@ const handleAudioRequest = async (req, res) => {
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
 
+    console.log("[Audio Download] מנסה להוריד את קובץ הקול מהנתיבים האפשריים:", possiblePaths);
+
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
+        console.log(`[Audio Download] מנסה להוריד נתיב: ${cleanPath}`);
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 6000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
+          console.log(`[Audio Download] הצלחה! הורד בהجלחה קובץ בגודל ${audioBuffer.length} בתים מנתיב: ${cleanPath}`);
           break;
         }
-      } catch (err) {}
+      } catch (err) {
+        console.log(`[Audio Download Fail] נכשל בהורדת הנתיב ${cleanPath}:`, err.message);
+      }
     }
 
     if (!audioBuffer) {
+      console.log("[Audio Error] לא נמצאה הקלטה תקינה באף אחד מהנתיבים!");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/1`);
     }
@@ -108,6 +127,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (groqApiKey) {
       try {
+        console.log("[Groq Whisper] שולח קובץ שמע לתמלול ב-Groq...");
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
@@ -134,13 +154,17 @@ const handleAudioRequest = async (req, res) => {
         );
 
         transcribedText = (transcriptionResponse.data?.text || "").trim();
-      } catch (err) {}
+        console.log(`[Groq Whisper Success] תוצאת תמלול: "${transcribedText}"`);
+      } catch (err) {
+        console.error("[Groq Whisper Error] שגיאה בתמלול Groq:", err.message);
+      }
     }
 
     const lowerTranscription = transcribedText.toLowerCase();
     const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
 
     if (isResetRequested) {
+      console.log(`[Reset] זוהתה בקשת איפוס שיחה מהמשתמש (${userPhone}). מאפס היסטוריה.`);
       const existingSession = conversationHistory.get(userPhone);
       if (existingSession?.timer) clearTimeout(existingSession.timer);
       conversationHistory.delete(userPhone);
@@ -150,16 +174,17 @@ const handleAudioRequest = async (req, res) => {
 
     let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
     if (userSession.timer) clearTimeout(userSession.timer);
-    userSession.timer = setTimeout(() => conversationHistory.delete(userPhone), 10 * 60 * 1000);
+    userSession.timer = setTimeout(() => {
+      console.log(`[Session Timeout] עברו 10 דקות ללא פעילות, מוחק היסטוריה למשתמש ${userPhone}`);
+      conversationHistory.delete(userPhone);
+    }, 10 * 60 * 1000);
 
     let finalAnswerText = "";
     
-    // --- הנחיית מערכת מעודכנת שמונעת התנצלויות על חוסר אינטרנט ---
     const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפד והפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     
-    // --- הרחבת תנאי החיפוש: מפעיל חיפוש אוטומטי גם כששואלים על חדשות, מה חדש, עדכונים או "חפש" ---
     const needsSearch = 
       lowerTranscription.startsWith("חפש") || 
       lowerTranscription.startsWith("חפשי") || 
@@ -172,7 +197,7 @@ const handleAudioRequest = async (req, res) => {
       lowerTranscription.includes("היום");
 
     if (needsSearch) {
-      console.log("[Search Triggered] מפעיל חיפוש חי באינטרנט עבור השאלה.");
+      console.log("🔍 [Search Triggered] התנאים מתאימים - מפעיל חיפוש חי באינטרנט (Google Search Tool).");
     }
 
     if (geminiKeys.length > 0) {
@@ -191,6 +216,7 @@ const handleAudioRequest = async (req, res) => {
       });
 
       if (isGroqTranscriptionWeak) {
+        console.log("[Gemini Fallback] תמלול Groq חלש או ריק, שולח את קובץ הקול הישירות ל-Gemini.");
         geminiContents.push({
           role: "user",
           parts: [
@@ -216,6 +242,7 @@ const handleAudioRequest = async (req, res) => {
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               if (isGroqTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
+              console.log(`[Gemini Success] התקבלה תשובה מפתח ${i+1} וממודל ${model}`);
               break keyLoop;
             }
           } catch (err) {}
@@ -225,6 +252,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (!finalAnswerText && openRouterApiKey && transcribedText.length > 0 && !isGroqTranscriptionWeak) {
       try {
+        console.log("[OpenRouter] מנסה לקבל תשובה מ-OpenRouter...");
         const messagesPayload = [
           { role: "system", content: systemInstruction },
           ...userSession.history,
@@ -238,7 +266,10 @@ const handleAudioRequest = async (req, res) => {
         );
 
         finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-      } catch (err) {}
+        console.log("[OpenRouter Success] התקבלה תשובה מ-OpenRouter.");
+      } catch (err) {
+        console.error("[OpenRouter Error] שגיאה ב-OpenRouter:", err.message);
+      }
     }
 
     if (!finalAnswerText) {
@@ -250,13 +281,14 @@ const handleAudioRequest = async (req, res) => {
       .replace(/\s+/g, " ")                                 
       .trim();
 
-    console.log("תשובה סופית נקייה:", cleanText);
+    console.log(`💬 [Final Answer] תשובה סופית נקייה להקראה למשתמש: "${cleanText}"`);
 
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
       userSession.history.push({ role: "assistant", content: cleanText });
       if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
       conversationHistory.set(userPhone, userSession);
+      console.log(`[Memory] היסטוריית השיחה עודכנה עבור משתמש ${userPhone} (סך הכל הודעות בזיכרון: ${userSession.history.length})`);
     }
 
     if (callId) {
@@ -268,7 +300,7 @@ const handleAudioRequest = async (req, res) => {
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
 
   } catch (error) {
-    console.error("=== שגיאה כוללת במערכת ===", error.message);
+    console.error("❌ === שגיאה כוללת במערכת ===", error.message, error.stack);
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-חלה שגיאה אנא נסה שנית&go_to_folder=/1`);
   }
@@ -279,5 +311,5 @@ app.all("/process-audio", handleAudioRequest);
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
