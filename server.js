@@ -57,16 +57,18 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2)
   }
 };
 
-// פונקציית עזר לניקוי ופורמט טקסט עברי בלבד עבור ימות המשיח
+// פונקציית עזר לניקוי קשיח ופורמט טקסט עבור ימות המשיח
 const formatTextForYemot = (text) => {
   if (!text) return "";
-  return text
+  const clean = text
     .replace(/[a-zA-Z]/g, "")                             // הסרת אותיות באנגלית
-    .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") // הסרת סימני פיסוק ותווים מיוחדים
-    .replace(/\d+\./g, "")                                 // הסרת מספרי רשימות
+    .replace(/[\n\r\t]/g, " ")                             // הסרת ירידות שורה וטאבים
+    .replace(/[^א-ת0-9\s]/g, "")                          // השארת אותיות עברית, מספרים ורווחים בלבד
     .replace(/\s+/g, " ")                                 // איחוד רווחים כפולים
-    .trim()
-    .replace(/ /g, "+");                                  // החלפת רווחים ב-פלוס
+    .trim();
+  
+  // קידוד בטוח ל-URL כדי שימות המשיח לא יתעלמו מההקראה
+  return encodeURIComponent(clean);
 };
 
 const handleAudioRequest = async (req, res) => {
@@ -127,7 +129,7 @@ const handleAudioRequest = async (req, res) => {
       console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       const errText = formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב");
-      return res.send(`id_list_message=t-${errText}`);
+      return res.send(`id_list_message=t-${errText}&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -185,7 +187,7 @@ const handleAudioRequest = async (req, res) => {
 
       res.set("Content-Type", "text/plain; charset=utf-8");
       const resetText = formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור");
-      return res.send(`id_list_message=t-${resetText}`);
+      return res.send(`id_list_message=t-${resetText}&go_to_folder=/1`);
     }
 
     // --- טעינה ועדכון של היסטוריית השיחה ---
@@ -296,10 +298,10 @@ const handleAudioRequest = async (req, res) => {
       throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
     }
 
-    // --- 5. פורמט נקי לעברית עם פלוסים ---
-    const cleanText = formatTextForYemot(finalAnswerText);
+    // --- 5. ניקוי ופורמט מקודד עבור ימות המשיח ---
+    const cleanTextEncoded = formatTextForYemot(finalAnswerText);
 
-    console.log("תשובה מפורמטת להקראה:", cleanText);
+    console.log("תשובה מפורמטת להקראה (Encoded):", cleanTextEncoded);
 
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
@@ -313,14 +315,15 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}`);
+    // שירשור הפקודות בפורמט התקני של ימות המשיח
+    return res.send(`id_list_message=t-${cleanTextEncoded}&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
     const errFormatted = formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית");
-    return res.send(`id_list_message=t-${errFormatted}`);
+    return res.send(`id_list_message=t-${errFormatted}&go_to_folder=/1`);
   }
 };
 
