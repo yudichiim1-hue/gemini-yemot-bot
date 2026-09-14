@@ -153,17 +153,34 @@ const handleAudioRequest = async (req, res) => {
     userSession.timer = setTimeout(() => conversationHistory.delete(userPhone), 10 * 60 * 1000);
 
     let finalAnswerText = "";
-    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה לשאלה.";
+    
+    // --- הנחיית מערכת מעודכנת שמונעת התנצלויות על חוסר אינטרנט ---
+    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפד והפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
-    const needsSearch = lowerTranscription.startsWith("חפש") || lowerTranscription.startsWith("חפשי") || lowerTranscription.includes(" חפש ") || lowerTranscription.includes(" חפשי ");
+    
+    // --- הרחבת תנאי החיפוש: מפעיל חיפוש אוטומטי גם כששואלים על חדשות, מה חדש, עדכונים או "חפש" ---
+    const needsSearch = 
+      lowerTranscription.startsWith("חפש") || 
+      lowerTranscription.startsWith("חפשי") || 
+      lowerTranscription.includes(" חפש ") || 
+      lowerTranscription.includes(" חפשי ") ||
+      lowerTranscription.includes("מה חדש") ||
+      lowerTranscription.includes("חדשות") ||
+      lowerTranscription.includes("עדכון") ||
+      lowerTranscription.includes("עדכונים") ||
+      lowerTranscription.includes("היום");
+
+    if (needsSearch) {
+      console.log("[Search Triggered] מפעיל חיפוש חי באינטרנט עבור השאלה.");
+    }
 
     if (geminiKeys.length > 0) {
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "מבין אענה באופן מדויק כולל אנגלית ומספרים לפי הצורך." }] }
+        { role: "model", parts: [{ text: "מבין אענה באופן מדויק ובמידת הצורך אשתמש בחיפוש." }] }
       ];
 
       userSession.history.forEach((msg) => {
@@ -228,7 +245,6 @@ const handleAudioRequest = async (req, res) => {
       finalAnswerText = "סליחה לא הבנתי את דבריך אנא נסה שנית";
     }
 
-    // --- ניקוי מחמיר שמוחק פסיקים וכל סימני הפיסוק, אבל שומר על אנגלית, עברית ומספרים ---
     const cleanText = finalAnswerText
       .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
       .replace(/\s+/g, " ")                                 
