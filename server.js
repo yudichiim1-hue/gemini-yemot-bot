@@ -28,30 +28,14 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date() });
 });
 
-const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2) => {
+// פונקציית קריאה ל-Gemini בלי לולאות מרובות שגורמות ל-429
+const callGeminiSimple = async (model, payload, geminiApiKey) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`[Gemini] שולח בקשה למודל ${model} (ניסיון ${attempt}/${maxRetries})...`);
-      const response = await axios.post(geminiUrl, payload, { 
-        headers: { "Content-Type": "application/json" }, 
-        timeout: 9000 
-      });
-      console.log(`[Gemini] התקבלה תשובה בהצלחה ממודל ${model}`);
-      return response;
-    } catch (err) {
-      const status = err.response?.status;
-      console.error(`[Gemini Error] שגיאה במודל ${model} (סטטוס: ${status || 'unknown'}):`, err.message);
-      if (status === 429 && attempt < maxRetries) {
-        const delay = 1500 * attempt; 
-        console.log(`[Gemini] עומס (429), ממתין ${delay}ms ומנסה שוב...`);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      } else {
-        throw err;
-      }
-    }
-  }
+  const response = await axios.post(geminiUrl, payload, { 
+    headers: { "Content-Type": "application/json" }, 
+    timeout: 8000 
+  });
+  return response;
 };
 
 const handleAudioRequest = async (req, res) => {
@@ -62,16 +46,14 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
-    // --- לוג מפורט מאוד של פרטי ההתקשרות ומערכת ימות המשיח ---
     console.log("\n==================================================");
     console.log("📞 [ימות המשיח] התקבלה פנייה חדשה מהמערכת!");
     console.log("--------------------------------------------------");
-    console.log(`📌 מספר טלפון מתקשר (ApiPhone): ${params.ApiPhone || params.phone || 'לא זוהה'}`);
+    console.log(`📌 מספר טלפון מתקשר (ApiPhone): ${userPhone}`);
     console.log(`🆔 מזהה שיחה ייחודי (CallId): ${callId || 'לא זוהה'}`);
     console.log(`📂 תיקייה ראשית (SHM): ${primaryFolder}`);
     console.log(`📂 תיקייה משנית/קודמת (SHL): ${secondaryFolder}`);
-    console.log(`🌐 כתובת קובץ שהועברה (path/file): ${params.path || params.file || 'לא הועבר, יחפש לפי ברירת מחדל'}`);
-    console.log("📋 כל הפרמטרים שהתקבלו מהמערכת:", JSON.stringify(params, null, 2));
+    console.log(`🌐 כתובת קובץ שהועברה (path/file): ${params.path || params.file || 'לא הועבר'}`);
     console.log("==================================================\n");
 
     if (callId && processedCalls.has(callId)) {
@@ -109,11 +91,11 @@ const handleAudioRequest = async (req, res) => {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 6000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          console.log(`[Audio Download] הצלחה! הורד בהجלחה קובץ בגודל ${audioBuffer.length} בתים מנתיב: ${cleanPath}`);
+          console.log(`[Audio Download] הצלחה! הורד קובץ בגודל ${audioBuffer.length} בתים מנתיב: ${cleanPath}`);
           break;
         }
       } catch (err) {
-        console.log(`[Audio Download Fail] נכשל בהורדת הנתיב ${cleanPath}:`, err.message);
+        console.log(`[Audio Download Fail] נכשל בהורדת הנתיב ${cleanPath}`);
       }
     }
 
@@ -131,7 +113,7 @@ const handleAudioRequest = async (req, res) => {
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
-        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nתמלל בעברית תקנית בלבד, כולל סלנג וביטויים ישראליים. אל תמציא מילים.\r\n`;
+        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nמה חדש תמלל בעברית תקנית בלבד סלנג וביטויים ישראליים אל תמציא מילים\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`;
         const formDataFooter = `\r\n--${boundary}--\r\n`;
 
@@ -164,7 +146,7 @@ const handleAudioRequest = async (req, res) => {
     const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
 
     if (isResetRequested) {
-      console.log(`[Reset] זוהתה בקשת איפוס שיחה מהמשתמש (${userPhone}). מאפס היסטוריה.`);
+      console.log(`[Reset] זוהתה בקשת איפוס שיחה מהמשתמש (${userPhone}).`);
       const existingSession = conversationHistory.get(userPhone);
       if (existingSession?.timer) clearTimeout(existingSession.timer);
       conversationHistory.delete(userPhone);
@@ -175,13 +157,12 @@ const handleAudioRequest = async (req, res) => {
     let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
     if (userSession.timer) clearTimeout(userSession.timer);
     userSession.timer = setTimeout(() => {
-      console.log(`[Session Timeout] עברו 10 דקות ללא פעילות, מוחק היסטוריה למשתמש ${userPhone}`);
       conversationHistory.delete(userPhone);
     }, 10 * 60 * 1000);
 
     let finalAnswerText = "";
     
-    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפד והפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
+    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     
@@ -197,10 +178,11 @@ const handleAudioRequest = async (req, res) => {
       lowerTranscription.includes("היום");
 
     if (needsSearch) {
-      console.log("🔍 [Search Triggered] התנאים מתאימים - מפעיל חיפוש חי באינטרנט (Google Search Tool).");
+      console.log("🔍 [Search Triggered] מפעיל חיפוש חי באינטרנט.");
     }
 
-    if (geminiKeys.length > 0) {
+    // --- שלב 1: ניסיון מול Gemini עם מנגנון מעבר חלק בין מפתחות ומודלים ---
+    if (geminiKeys.length > 0 && !finalAnswerText) {
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
       const geminiContents = [
@@ -216,7 +198,6 @@ const handleAudioRequest = async (req, res) => {
       });
 
       if (isGroqTranscriptionWeak) {
-        console.log("[Gemini Fallback] תמלול Groq חלש או ריק, שולח את קובץ הקול הישירות ל-Gemini.");
         geminiContents.push({
           role: "user",
           parts: [
@@ -233,26 +214,30 @@ const handleAudioRequest = async (req, res) => {
         payload.tools = [{ googleSearch: {} }];
       }
 
-      keyLoop:
-      for (let i = 0; i < geminiKeys.length; i++) {
-        const apiKey = geminiKeys[i];
+      for (let k = 0; k < geminiKeys.length; k++) {
+        if (finalAnswerText) break;
+        const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            const response = await callGeminiWithRetry(model, payload, apiKey);
+            console.log(`[Gemini] מנסה מפתח ${k+1}, מודל ${model}...`);
+            const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               if (isGroqTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
-              console.log(`[Gemini Success] התקבלה תשובה מפתח ${i+1} וממודל ${model}`);
-              break keyLoop;
+              console.log(`[Gemini Success] הצלחה עם מודל ${model}`);
+              break;
             }
-          } catch (err) {}
+          } catch (err) {
+            console.log(`[Gemini 429/Error] מודל ${model} נכשל (${err.response?.status || err.message}), עובר הלאה...`);
+          }
         }
       }
     }
 
-    if (!finalAnswerText && openRouterApiKey && transcribedText.length > 0 && !isGroqTranscriptionWeak) {
+    // --- שלב 2: Fallback ל-OpenRouter אם Gemini נכשל או חסום ב-429 ---
+    if (!finalAnswerText && openRouterApiKey && transcribedText.length > 0) {
       try {
-        console.log("[OpenRouter] מנסה לקבל תשובה מ-OpenRouter...");
+        console.log("[OpenRouter Fallback] מנסה לקבל תשובה מ-OpenRouter...");
         const messagesPayload = [
           { role: "system", content: systemInstruction },
           ...userSession.history,
@@ -262,7 +247,7 @@ const handleAudioRequest = async (req, res) => {
         const openRouterCompletion = await axios.post(
           "https://openrouter.ai/api/v1/chat/completions",
           { model: "openrouter/free", messages: messagesPayload, temperature: 0.3 },
-          { headers: { "Authorization": `Bearer ${openRouterApiKey}`, "Content-Type": "application/json" }, timeout: 5000 }
+          { headers: { "Authorization": `Bearer ${openRouterApiKey}`, "Content-Type": "application/json" }, timeout: 6000 }
         );
 
         finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
@@ -273,7 +258,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!finalAnswerText) {
-      finalAnswerText = "סליחה לא הבנתי את דבריך אנא נסה שנית";
+      finalAnswerText = "כרגע יש עומס על שרתי הבינה המלאכותית אנא נסי שנית בעוד מספר רגעים";
     }
 
     const cleanText = finalAnswerText
@@ -281,14 +266,13 @@ const handleAudioRequest = async (req, res) => {
       .replace(/\s+/g, " ")                                 
       .trim();
 
-    console.log(`💬 [Final Answer] תשובה סופית נקייה להקראה למשתמש: "${cleanText}"`);
+    console.log(`💬 [Final Answer] תשובה סופית: "${cleanText}"`);
 
-    if (transcribedText) {
+    if (transcribedText && !transcribedText.startsWith("[שמע")) {
       userSession.history.push({ role: "user", content: transcribedText });
       userSession.history.push({ role: "assistant", content: cleanText });
       if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
       conversationHistory.set(userPhone, userSession);
-      console.log(`[Memory] היסטוריית השיחה עודכנה עבור משתמש ${userPhone} (סך הכל הודעות בזיכרון: ${userSession.history.length})`);
     }
 
     if (callId) {
@@ -300,9 +284,9 @@ const handleAudioRequest = async (req, res) => {
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
 
   } catch (error) {
-    console.error("❌ === שגיאה כוללת במערכת ===", error.message, error.stack);
+    console.error("❌ === שגיאה כוללת במערכת ===", error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-חלה שגיאה אנא נסה שנית&go_to_folder=/1`);
+    return res.send(`id_list_message=t-חלה שגיאה במערכת אנא נסה שנית&go_to_folder=/1`);
   }
 };
 
