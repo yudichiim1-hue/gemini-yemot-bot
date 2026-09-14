@@ -57,12 +57,12 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 1)
   }
 };
 
-// פונקציית ניקוי בטוחה - משאירה אותיות עברית, מספרים, רווחים, נקודות ופסיקים (חובה למנוע ה-TTS של ימות המשיח)
+// פונקציית ניקוי אגרסיבית המקורית - משאירה אך ורק אותיות בעברית, מספרים ורווחים
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
-    .replace(/[^א-ת0-9\s,.]/g, "") // שומר עברית, מספרים, רווחים, פסיקים ונקודות
-    .replace(/\s+/g, " ")          // מאחד רווחים כפולים
+    .replace(/[^א-ת0-9\s]/g, "") // מוחק כל תו שאינו אות בעברית, מספר או רווח
+    .replace(/\s+/g, " ")        // מאחד רווחים כפולים
     .trim();
 };
 
@@ -124,8 +124,8 @@ const handleAudioRequest = async (req, res) => {
     if (!audioBuffer) {
       console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const errText = formatTextForYemot("לא נמצאה הקלטה תקינה. אנא הקלט שוב.");
-      return res.send(`tts=${encodeURIComponent(errText)}&go_to_folder=/1`);
+      const errText = formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב");
+      return res.send(`id_list_message=m-${encodeURIComponent(errText)}&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -182,8 +182,8 @@ const handleAudioRequest = async (req, res) => {
       }
 
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const resetText = formatTextForYemot("השיחה אופסה בהצלחה. במה אוכל לעזור?");
-      return res.send(`tts=${encodeURIComponent(resetText)}&go_to_folder=/1`);
+      const resetText = formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור");
+      return res.send(`id_list_message=m-${encodeURIComponent(resetText)}&go_to_folder=/1`);
     }
 
     // --- טעינה ועדכון של היסטוריית השיחה ---
@@ -197,7 +197,7 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד. מותר להשתמש בנקודות ופסיקים בלבד. ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
+    const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, ללא סימני פיסוק, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
 
     // --- 3. תשובה מ-OpenRouter ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
@@ -244,7 +244,7 @@ const handleAudioRequest = async (req, res) => {
 
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "מבין. אענה בקצרה בהתאם להנחיות." }] }
+        { role: "model", parts: [{ text: "מבין, אענה בקצרה בהתאם להנחיות ובהתבסס על ההיסטוריה." }] }
       ];
 
       userSession.history.forEach((msg) => {
@@ -312,14 +312,14 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`tts=${encodeURIComponent(cleanText)}&go_to_folder=/1`);
+    return res.send(`id_list_message=m-${encodeURIComponent(cleanText)}&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    const errFormatted = formatTextForYemot("חלה שגיאה בעיבוד ההודעה. אנא נסה שנית.");
-    return res.send(`tts=${encodeURIComponent(errFormatted)}&go_to_folder=/1`);
+    const errFormatted = formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית");
+    return res.send(`id_list_message=m-${encodeURIComponent(errFormatted)}&go_to_folder=/1`);
   }
 };
 
