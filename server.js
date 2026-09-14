@@ -58,6 +58,14 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
+    // בדיקה אם המשתמש לחץ סולמית או מקש עצירה מתוך ה-Read של ימות המשיח
+    const readInput = params.readkey || params.Text || params.isError;
+    if (params.ivrs_read || readInput === "#" || params.hangup === "yes") {
+      console.log("[User Interrupted / Pressed #] המשתמש עצר את ההקראה.");
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(`go_to_folder=/1`);
+    }
+
     console.log("\n==========================================");
     console.log("--- קריאה חדשה התקבלה ---");
     console.log("Call ID:", callId);
@@ -154,12 +162,10 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
     
-    // --- הנחיית מערכת מעודכנת שמונעת התנצלויות על חוסר אינטרנט ---
-    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפד והפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
+    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     
-    // --- הרחבת תנאי החיפוש: מפעיל חיפוש אוטומטי גם כששואלים על חדשות, מה חדש, עדכונים או "חפש" ---
     const needsSearch = 
       lowerTranscription.startsWith("חפש") || 
       lowerTranscription.startsWith("חפשי") || 
@@ -170,10 +176,6 @@ const handleAudioRequest = async (req, res) => {
       lowerTranscription.includes("עדכון") ||
       lowerTranscription.includes("עדכונים") ||
       lowerTranscription.includes("היום");
-
-    if (needsSearch) {
-      console.log("[Search Triggered] מפעיל חיפוש חי באינטרנט עבור השאלה.");
-    }
 
     if (geminiKeys.length > 0) {
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
@@ -264,8 +266,11 @@ const handleAudioRequest = async (req, res) => {
       setTimeout(() => processedCalls.delete(callId), 5000);
     }
 
+    // --- שימוש בפקודת Read של ימות המשיח המאפשרת עצירה באמצעות לחיצה על סולמית (#) ---
+    // הפקודה אומרת לימות המשיח להקריא את הטקסט, ובמקביל להאזין ללחיצה על מקש # (או כל מקש אחר שיעצור ויעביר חזרה לתיקייה 1 להקלטה)
+    res.set("Type", "api");
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
+    return res.send(`read=t-${cleanText}=,s,1,1,1,no,yes,yes,no,yes&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===", error.message);
