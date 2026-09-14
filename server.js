@@ -58,10 +58,9 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
-    // בדיקה אם המשתמש לחץ סולמית או מקש עצירה מתוך ה-Read של ימות המשיח
-    const readInput = params.readkey || params.Text || params.isError;
-    if (params.ivrs_read || readInput === "#" || params.hangup === "yes") {
-      console.log("[User Interrupted / Pressed #] המשתמש עצר את ההקראה.");
+    // בדיקת לחיצת מקש עצירה מטעם ימות המשיח
+    if (params.readkey || params.Text === "#" || params.ivrs_read || params.hangup === "yes") {
+      console.log("[User Interrupted] המשתמש עצר את ההקראה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
     }
@@ -119,7 +118,7 @@ const handleAudioRequest = async (req, res) => {
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
-        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nתמלל בעברית תקנית בלבד, כולל סלנג וביטויים ישראליים. אל תמציא מילים.\r\n`;
+        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nמה חדש, תמלל בעברית תקנית בלבד.\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`;
         const formDataFooter = `\r\n--${boundary}--\r\n`;
 
@@ -211,10 +210,10 @@ const handleAudioRequest = async (req, res) => {
 
       keyLoop:
       for (let i = 0; i < geminiKeys.length; i++) {
-        const apiKey = geminiKeys[i];
+        constapiKey = geminiKeys[i];
         for (const model of geminiModels) {
           try {
-            const response = await callGeminiWithRetry(model, payload, apiKey);
+            const response = await callGeminiWithRetry(model, payload, geminiKeys[i]);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               if (isGroqTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
@@ -257,7 +256,7 @@ const handleAudioRequest = async (req, res) => {
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
       userSession.history.push({ role: "assistant", content: cleanText });
-      if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
+      if (userSession.history.length > 6) userSession.history = userSession.history.length > 6 ? userSession.history.slice(-6) : userSession.history;
       conversationHistory.set(userPhone, userSession);
     }
 
@@ -266,11 +265,10 @@ const handleAudioRequest = async (req, res) => {
       setTimeout(() => processedCalls.delete(callId), 5000);
     }
 
-    // --- שימוש בפקודת Read של ימות המשיח המאפשרת עצירה באמצעות לחיצה על סולמית (#) ---
-    // הפקודה אומרת לימות המשיח להקריא את הטקסט, ובמקביל להאזין ללחיצה על מקש # (או כל מקש אחר שיעצור ויעביר חזרה לתיקייה 1 להקלטה)
-    res.set("Type", "api");
+    // --- שימוש בפורמט Read תקין ומדויק של ימות המשיח שקולט לחיצת סולמית ומחזיר מיד לתיקיית ההקלטה ---
+    // מבנה ה-Read: קריאת טקסט באורך תו 1 לפחות, מתן אפשרות לעצירה ומעבר מיידי ליעד
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`read=t-${cleanText}=,s,1,1,1,no,yes,yes,no,yes&go_to_folder=/1`);
+    return res.send(`read=t-${cleanText}=,yes,1,1,1,no,yes,yes,no,yes&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===", error.message);
