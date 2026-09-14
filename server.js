@@ -1,5 +1,5 @@
 const express = require("express");
-const axios = require("axios");
+const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 
 const app = express();
 
@@ -24,7 +24,7 @@ const RESET_TRIGGERS = [
   "ניקוי היסטוריה"
 ];
 
-// --- 1. נתיבי Ping עבור UptimeRobot ---
+// --- נתיבי Ping עבור UptimeRobot ---
 app.get("/ping", (req, res) => {
   res.status(200).send("PONG");
 });
@@ -119,15 +119,17 @@ const handleAudioRequest = async (req, res) => {
 
     let transcribedText = "";
 
-    // --- 2. תמלול ב-Groq Whisper ---
+    // --- שדרוג תמלול ב-Groq Whisper עם המודל המלא והאיכותי whisper-large-v3 ---
     if (groqApiKey) {
       try {
-        console.log("[Groq] מתחיל תמלול שמע ב-Whisper...");
+        console.log("[Groq] מתחיל תמלול שמע עם whisper-large-v3...");
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
-        let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3-turbo\r\n`;
+        
+        let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
-        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nתמלל בעברית בלבד ובאותיות עבריות.\r\n`;
+        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nתמלל בעברית תקנית בלבד, כולל סלנג וביטויים ישראליים. אל תמציא מילים ואל תתרגם לאנגלית.\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`;
+        
         const formDataFooter = `\r\n--${boundary}--\r\n`;
 
         const fullBuffer = Buffer.concat([
@@ -144,7 +146,7 @@ const handleAudioRequest = async (req, res) => {
               "Authorization": `Bearer ${groqApiKey}`,
               "Content-Type": `multipart/form-data; boundary=${boundary}`
             },
-            timeout: 10000
+            timeout: 12000
           }
         );
 
@@ -177,7 +179,6 @@ const handleAudioRequest = async (req, res) => {
     // --- טעינה ועדכון של היסטוריית השיחה ---
     let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
     
-    // איפוס הטיימר של 10 דקות בכל הודעה חדשה
     if (userSession.timer) clearTimeout(userSession.timer);
     userSession.timer = setTimeout(() => {
       console.log(`[History] עברו 10 דקות, מוחק היסטוריית שיחה עבור ${userPhone}`);
@@ -188,7 +189,7 @@ const handleAudioRequest = async (req, res) => {
 
     const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
 
-    // --- 3. תשובה מ-OpenRouter (שילוב היסטוריה) ---
+    // --- תשובה מ-OpenRouter ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
       try {
         console.log("[OpenRouter] שולח בקשה עם היסטוריית שיחה ל-openrouter/free...");
@@ -226,7 +227,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- 4. Fallback - Gemini (שילוב היסטוריה) ---
+    // --- Fallback - Gemini ---
     if (!finalAnswerText && geminiKeys.length > 0) {
       console.log("[Gemini] מפעיל גיבוי מול גוגל עם היסטוריית שיחה...");
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
@@ -280,10 +281,10 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!finalAnswerText) {
-      throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
+      throw new Error("לא התקבלה תשובה משום ספק (OpenRouter / Gemini).");
     }
 
-    // --- 5. ניקוי מוחלט של סימני פיסוק, ניקוד ותווים מיוחדים ---
+    // --- ניקוי מוחלט של סימני פיסוק, ניקוד ותווים מיוחדים לימות המשיח ---
     const cleanText = finalAnswerText
       .replace(/[a-zA-Z]/g, "")                             
       .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
@@ -293,7 +294,7 @@ const handleAudioRequest = async (req, res) => {
 
     console.log("תשובה סופית נקייה:", cleanText);
 
-    // שמירת התגובה והתמלול הנוכחי בהיסטוריה של המשתמש
+    // שמירת התגובה והתמלול בהיסטוריה של המשתמש
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
       userSession.history.push({ role: "assistant", content: cleanText });
