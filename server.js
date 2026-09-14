@@ -153,25 +153,19 @@ const handleAudioRequest = async (req, res) => {
     userSession.timer = setTimeout(() => conversationHistory.delete(userPhone), 10 * 60 * 1000);
 
     let finalAnswerText = "";
-    const systemInstruction = "אתה עוזר קולי חכם בטלפון. ענה בעברית פשוטה בלבד, ברורה וישירה. ללא סימני פיסוק, ללא מספרים, ללא אנגלית. עד 2 משפטים רציפים קצרים.";
+    
+    // --- שדרוג הנחיית המערכת: מאפשר אנגלית ונתונים באנגלית כשנדרש ---
+    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. הימנע מסימני פיסוק מיותרים והקפד על תשובה ישירה לשאלה.";
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
-
-    // --- בדיקה האם המשתמש ביקש מפורשות לחפש בגוגל ("חפש" או "חפשי") ---
     const needsSearch = lowerTranscription.startsWith("חפש") || lowerTranscription.startsWith("חפשי") || lowerTranscription.includes(" חפש ") || lowerTranscription.includes(" חפשי ");
 
-    if (needsSearch) {
-      console.log("[Search Triggered] המשתמש ביקש חיפוש חי באינטרנט.");
-    }
-
-    // --- Gemini (עם הפעלת חיפוש גוגל רק אם המשתמש ביקש זאת במפורש) ---
     if (geminiKeys.length > 0) {
-      console.log("[Gemini] מפעיל בקשה מול גוגל...");
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "מבין, אענה בקצרה." }] }
+        { role: "model", parts: [{ text: "מבין, אענה באופן מדויק כולל אנגלית ומספרים לפי הצורך." }] }
       ];
 
       userSession.history.forEach((msg) => {
@@ -193,11 +187,7 @@ const handleAudioRequest = async (req, res) => {
         geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
       }
 
-      // הרכבת ה-Payload - כלי החיפוש יצורף אך ורק אם המשתמש אמר "חפש/חפשי"
-      const payload = {
-        contents: geminiContents
-      };
-
+      const payload = { contents: geminiContents };
       if (needsSearch) {
         payload.tools = [{ googleSearch: {} }];
       }
@@ -218,7 +208,6 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // גיבוי OpenRouter
     if (!finalAnswerText && openRouterApiKey && transcribedText.length > 0 && !isGroqTranscriptionWeak) {
       try {
         const messagesPayload = [
@@ -229,7 +218,7 @@ const handleAudioRequest = async (req, res) => {
 
         const openRouterCompletion = await axios.post(
           "https://openrouter.ai/api/v1/chat/completions",
-          { model: "openrouter/free", messages: messagesPayload, temperature: 0.4 },
+          { model: "openrouter/free", messages: messagesPayload, temperature: 0.3 },
           { headers: { "Authorization": `Bearer ${openRouterApiKey}`, "Content-Type": "application/json" }, timeout: 5000 }
         );
 
@@ -241,10 +230,9 @@ const handleAudioRequest = async (req, res) => {
       finalAnswerText = "סליחה לא הבנתי את דבריך אנא נסה שנית";
     }
 
+    // --- ניקוי מעודן ששומר על אותיות באנגלית, מספרים ורווחים, ומסיר רק סימני פיסוק בעייתיים ---
     const cleanText = finalAnswerText
-      .replace(/[a-zA-Z]/g, "")                             
-      .replace(/[.,?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
-      .replace(/\d+\./g, "")                                 
+      .replace(/[?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
       .replace(/\s+/g, " ")                                 
       .trim();
 
