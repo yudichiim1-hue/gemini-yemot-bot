@@ -124,7 +124,7 @@ const handleAudioRequest = async (req, res) => {
       console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       const errText = formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב");
-      return res.send(`id_list_message=v-${encodeURIComponent(errText)}&go_to_folder=/1`);
+      return res.send(`id_list_message=m-${encodeURIComponent(errText)}&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -182,7 +182,7 @@ const handleAudioRequest = async (req, res) => {
 
       res.set("Content-Type", "text/plain; charset=utf-8");
       const resetText = formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור");
-      return res.send(`id_list_message=v-${encodeURIComponent(resetText)}&go_to_folder=/1`);
+      return res.send(`id_list_message=m-${encodeURIComponent(resetText)}&go_to_folder=/1`);
     }
 
     // --- טעינה ועדכון של היסטוריית השיחה ---
@@ -310,14 +310,14 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=v-${encodeURIComponent(cleanText)}&go_to_folder=/1`);
+    return res.send(`id_list_message=m-${encodeURIComponent(cleanText)}&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
     const errFormatted = formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית");
-    return res.send(`id_list_message=v-${encodeURIComponent(errFormatted)}&go_to_folder=/1`);
+    return res.send(`id_list_message=m-${encodeURIComponent(errFormatted)}&go_to_folder=/1`);
   }
 };
 
