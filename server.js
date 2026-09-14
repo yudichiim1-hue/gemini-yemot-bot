@@ -19,22 +19,27 @@ app.get("/health", (req, res) => {
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
-    .replace(/[^א-ת0-9\s]/g, "") // מנקה לחלוטין כל מה שאינו עברית, מספר או רווח
+    .replace(/[^א-ת0-9\s]/g, "") // ניקוי מוחלט לטובת ימות המשיח
     .replace(/\s+/g, " ")
     .trim();
 };
 
 const handleAudioRequest = async (req, res) => {
+  const startTime = Date.now();
+  console.log("\n==================================================");
+  console.log("🟢 [חג ושמח] התקבלה קריאה חדשה ממערכת ימות המשיח!");
+
   try {
     const params = { ...req.query, ...req.body };
     const callId = params.ApiCallId || params.ApiYFCallId;
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
-    console.log("\n--- קריאה חדשה התקבלה ---");
-    console.log("Call ID:", callId);
+    console.log(`📞 [זיהוי שיחה] Call ID: ${callId || "לא נמצא"}, תיקיות: ראשי (${primaryFolder}), משני (${secondaryFolder})`);
 
+    // מניעת כפילויות של אותה שיחה
     if (callId && processedCalls.has(callId)) {
+      console.log("🔄 [חג כפול] זוהתה קריאה כפולה לאותו Call ID, מחזיר מעבר תיקיה.");
       processedCalls.delete(callId);
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
       return res.send("go_to_folder=/1");
@@ -52,28 +57,36 @@ const handleAudioRequest = async (req, res) => {
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
 
+    console.log("📥 [שלב הורדה] מנסה להוריד קובץ שמע מימות המשיח...");
+
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
+        console.log(`🔍 מנסה נתיב: ${cleanPath}`);
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 4000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
+          console.log(`✅ [הורדה הצליחה] הקובץ הורד בהצלחה מנתיב: ${cleanPath} (גודל: ${audioBuffer.length} בתים)`);
           break;
         }
-      } catch (err) {}
+      } catch (err) {
+        console.log(`⚠️ נכשל בנתיב ${cleanPath}, ממשיך הלאה...`);
+      }
     }
 
     if (!audioBuffer) {
+      console.log("❌ [שגיאת שמע] לא נמצאה הקלטה תקינה באף אחד מהנתיבים!");
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
       return res.send("id_list_message=m-לא נמצאה הקלטה תקינה");
     }
 
     let transcribedText = "";
 
-    // תמלול ב-Groq
+    // שלב תמלול ב-Groq
     if (groqApiKey) {
+      console.log("🎙️ [שלב תמלול] שולח את הקובץ לתמלול ב-Groq (Whisper)...");
       try {
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3-turbo\r\n`;
@@ -99,14 +112,20 @@ const handleAudioRequest = async (req, res) => {
           }
         );
         transcribedText = transcriptionResponse.data?.text || "";
-      } catch (err) {}
+        console.log(`📝 [תמלול הושלם] הטקסט שזוהה: "${transcribedText}"`);
+      } catch (err) {
+        console.log(`⚠️ [שגיאת תמלול ב-Groq]: ${err.message}`);
+      }
+    } else {
+      console.log("ℹ️ מפתח Groq אינו מוגדר, מדלג על שלב התמלול.");
     }
 
     let finalAnswerText = "";
     const systemInstruction = "ענה בעברית פשוטה בלבד, ללא סימני פיסוק, ללא מספרים, עד 2 משפטים.";
 
-    // תשובה מ-Gemini
+    // שלב הפקת תשובה מ-Gemini
     if (geminiApiKey) {
+      console.log("🤖 [שלב AI] שולח בקשה למודל Gemini...");
       try {
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiApiKey}`;
         const response = await axios.post(geminiUrl, {
@@ -116,24 +135,36 @@ const handleAudioRequest = async (req, res) => {
         }, { timeout: 6000 });
 
         finalAnswerText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      } catch (err) {}
+        console.log(`💡 [תשובת AI גולמית]: "${finalAnswerText}"`);
+      } catch (err) {
+        console.log(`⚠️ [שגיאת Gemini]: ${err.message}`);
+      }
+    } else {
+      console.log("⚠️ מפתח Gemini אינו מוגדר!");
     }
 
     if (!finalAnswerText) {
       finalAnswerText = "שגיאה בעיבוד הנתונים";
+      console.log("⚠️ לא התקבלה תשובה מה-AI, משתמש בברירת מחדל.");
     }
 
     const cleanText = formatTextForYemot(finalAnswerText);
+    console.log(`✨ [טקסט סופי נקי לימות המשיח]: "${cleanText}"`);
 
     if (callId) {
       processedCalls.set(callId, true);
       setTimeout(() => processedCalls.delete(callId), 5000);
     }
 
+    const totalTime = Date.now() - startTime;
+    console.log(`⏱️ [סיום תהליך] זמן כולל לעיבוד הקריאה: ${totalTime}ms`);
+    console.log("==================================================\n");
+
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     return res.status(200).send(`id_list_message=m-${encodeURIComponent(cleanText)}`);
 
   } catch (error) {
+    console.error("❌ [שגיאה קריטית במערכת]:", error.stack || error.message);
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     return res.status(200).send("id_list_message=m-שגיאה במערכת");
   }
@@ -144,5 +175,5 @@ app.all("/process-audio", handleAudioRequest);
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 [שרת הופעל] השרת רץ בהצלחה על פורט ${PORT} ומוכן לקריאות!`);
 });
