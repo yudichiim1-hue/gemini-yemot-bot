@@ -1,63 +1,119 @@
 const express = require("express");
 const axios = require("axios");
+const { MsEdgeTTS, OUTPUT_FORMAT } = require("edge-tts");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
-// זיכרון למניעת כפילויות רגעיות
-const processedCalls = new Map();
+// יצירת תיקיית קובצי שמע אם אינה קיימת
+const audioDir = path.join(__dirname, "audio");
+if (!fs.existsSync(audioDir)) {
+  fs.mkdirSync(audioDir);
+}
 
-// זיכרון היסטוריית שיחה לפי מספר טלפון (שומר 10 דקות)
+// הגשת קובצי שמע סטטיים עבור ימות המשיח
+app.use("/audio", express.static(audioDir));
+
+// זיכרון למניעת כפילויות והיסטוריה
+const processedCalls = new Map();
 const conversationHistory = new Map();
 
-// ביטויי איפוס שיחה
 const RESET_TRIGGERS = [
-  "תתחיל מחדש",
-  "תתחילי מחדש",
-  "אפס שיחה",
-  "איפוס שיחה",
-  "שיחה חדשה",
-  "התחל מחדש",
-  "תמחק היסטוריה",
-  "ניקוי היסטוריה"
+  "תתחיל מחדש", "תתחילי מחדש", "אפס שיחה",
+  "איפוס שיחה", "שיחה חדשה", "התחל מחדש",
+  "תמחק היסטוריה", "ניקוי היסטוריה"
 ];
 
-// --- 1. נתיבי Ping עבור UptimeRobot ---
-app.get("/ping", (req, res) => {
-  res.status(200).send("PONG");
-});
+// --- 1. יצירת שמע ב-ElevenLabs ---
+const generateElevenLabsTTS = async (text, filePath, apiKey) => {
+  if (!apiKey) return false;
+  try {
+    // מזהה קול מומלץ בעברית (ניתן להחליף ב-Voice ID לפי בחירתך)
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; 
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok", timestamp: new Date() });
-});
-
-// פונקציית עזר לקריאות מול Gemini עם מנגנון Retry
-const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2) => {
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await axios.post(geminiUrl, payload, { 
-        headers: { "Content-Type": "application/json" }, 
-        timeout: 10000 
-      });
-      return response;
-    } catch (err) {
-      const status = err.response?.status;
-      if (status === 429 && attempt < maxRetries) {
-        const delay = 2000 * attempt; 
-        console.warn(`[Gemini 429] חריגת מכסה בדגם ${model}. מנסה שוב בעוד ${delay / 1000} שניות...`);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      } else {
-        throw err;
+    const response = await axios.post(
+      url,
+      {
+        text: text,
+        model_id: "eleven_multilingual_v2",
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+      },
+      {
+        headers: {
+          "xi-api-key": apiKey,
+          "Content-Type": "application/json"
+        },
+        responseType: "arraybuffer",
+        timeout: 10000
       }
-    }
+    );
+
+    await fs.promises.writeFile(filePath, Buffer.from(response.data));
+    console.log("[TTS] נוצר בהצלחה באמצעות ElevenLabs!");
+    return true;
+  } catch (err) {
+    console.warn(`[ElevenLabs Fallback] נכשל או שנגמרה המכסה: ${err.response?.status || err.message}`);
+    return false;
   }
 };
 
-// פונקציית עזר לפורמט טקסט עבור ימות המשיח (הגרסה המקורית שעבדה)
+// --- 2. יצירת שמע ב-Edge TTS (גיבוי חינמי ללא הגבלה) ---
+const generateEdgeTTS = async (text, filePath) => {
+  try {
+    const tts = new MsEdgeTTS();
+    // קול זכר טבעי בעברית: he-IL-AvriNeural (או נקבה: he-IL-HilaNeural)
+    await tts.setMetadata("he-IL-AvriNeural", OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+    const stream = tts.stream(text);
+    const outStream = fs.createWriteStream(filePath);
+
+    stream.pipe(outStream);
+
+    return new Promise((resolve, reject) => {
+      outStream.on("finish", () => {
+        console.log("[TTS] נוצר בהצלחה באמצעות Edge TTS!");
+        resolve(true);
+      });
+      outStream.on("error", (err) => {
+        console.error("[Edge TTS Error]:", err);
+        reject(false);
+      });
+    });
+  } catch (err) {
+    console.error("[Edge TTS Exception]:", err.message);
+    return false;
+  }
+};
+
+// --- 3. פונקציית TTS משולבת (ElevenLabs -> Edge TTS) ---
+const createAudioResponse = async (text, callId, req) => {
+  const filename = `speech_${callId || Date.now()}_${Math.floor(Math.random() * 1000)}.mp3`;
+  const filePath = path.join(audioDir, filename);
+  const elevenKey = (process.env.ELEVENLABS_API_KEY || "").trim();
+
+  // ניסיון ראשון: ElevenLabs
+  let success = await generateElevenLabsTTS(text, filePath, elevenKey);
+
+  // ניסיון שני: Edge TTS במידה ו-ElevenLabs נכשל או נגמרה המכסה
+  if (!success) {
+    console.log("[TTS] עובר לגיבוי Edge TTS...");
+    success = await generateEdgeTTS(text, filePath);
+  }
+
+  if (success) {
+    const protocol = req.headers["x-forwarded-proto"] || "https";
+    const host = req.headers["host"] || process.env.RENDER_EXTERNAL_HOSTNAME;
+    return `${protocol}://${host}/audio/${filename}`;
+  }
+
+  return null;
+};
+
+// פונקציית עזר לפורמט טקסט
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
@@ -66,6 +122,21 @@ const formatTextForYemot = (text) => {
     .replace(/[^א-ת0-9\s,.?]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+};
+
+const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2) => {
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await axios.post(geminiUrl, payload, { headers: { "Content-Type": "application/json" }, timeout: 10000 });
+    } catch (err) {
+      if (err.response?.status === 429 && attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+      } else {
+        throw err;
+      }
+    }
+  }
 };
 
 const handleAudioRequest = async (req, res) => {
@@ -79,11 +150,8 @@ const handleAudioRequest = async (req, res) => {
     console.log("\n==========================================");
     console.log("--- קריאה חדשה התקבלה ---");
     console.log("Call ID:", callId);
-    console.log("Phone:", userPhone);
 
-    // מניעת כפילויות רגעיות
     if (callId && processedCalls.has(callId)) {
-      console.log(`[Cache] קריאה כפולה זוהתה עבור ${callId}, מחזיר מעבר שקט.`);
       processedCalls.delete(callId);
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
@@ -92,7 +160,6 @@ const handleAudioRequest = async (req, res) => {
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const groqApiKey = (process.env.GROQ_API_KEY || "").trim();
     const openRouterApiKey = (process.env.OPENROUTER_API_KEY || "").trim();
-    
     const geminiKeys = [
       (process.env.GEMINI_API_KEY || "").trim(),
       (process.env.GEMINI_API_KEY_1 || "").trim()
@@ -114,27 +181,21 @@ const handleAudioRequest = async (req, res) => {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 7000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          console.log(`[הצלחה] הקובץ הורד בהצלחה! גודל: ${audioBuffer.length} bytes`);
           break;
         }
-      } catch (err) {
-        // התעלם מנתיבים שאינם קיימים
-      }
+      } catch (err) {}
     }
 
     if (!audioBuffer) {
-      console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const errText = formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב");
-      return res.send(`id_list_message=t-${errText}&go_to_folder=/1`);
+      return res.send(`id_list_message=t-${formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב")}&go_to_folder=/1`);
     }
 
     let transcribedText = "";
 
-    // --- 2. תמלול ב-Groq Whisper ---
+    // תמלול ב-Groq
     if (groqApiKey) {
       try {
-        console.log("[Groq] מתחיל תמלול שמע ב-Whisper...");
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3-turbo\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
@@ -151,154 +212,74 @@ const handleAudioRequest = async (req, res) => {
         const transcriptionResponse = await axios.post(
           "https://api.groq.com/openai/v1/audio/transcriptions",
           fullBuffer,
-          {
-            headers: {
-              "Authorization": `Bearer ${groqApiKey}`,
-              "Content-Type": `multipart/form-data; boundary=${boundary}`
-            },
-            timeout: 10000
-          }
+          { headers: { "Authorization": `Bearer ${groqApiKey}`, "Content-Type": `multipart/form-data; boundary=${boundary}` }, timeout: 10000 }
         );
-
         transcribedText = transcriptionResponse.data?.text || "";
-        console.log("[Groq] תמלול עבר בהצלחה:", transcribedText);
       } catch (err) {
-        console.error("[Groq שגיאת תמלול]:", err.response?.status, err.response?.data || err.message);
+        console.error("[Groq Error]:", err.message);
       }
     }
 
-    // --- בדיקת זיהוי מילות איפוס שיחה ---
-    const lowerTranscription = transcribedText.trim().toLowerCase();
-    const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
-
-    if (isResetRequested) {
-      console.log(`[Reset] זוהתה בקשת איפוס עבור ${userPhone}. מוחק היסטוריה...`);
+    // בדיקת איפוס שיחה
+    if (RESET_TRIGGERS.some(trigger => transcribedText.trim().toLowerCase().includes(trigger))) {
       const existingSession = conversationHistory.get(userPhone);
       if (existingSession?.timer) clearTimeout(existingSession.timer);
       conversationHistory.delete(userPhone);
 
-      if (callId) {
-        processedCalls.set(callId, true);
-        setTimeout(() => processedCalls.delete(callId), 5000);
-      }
-
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const resetText = formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור");
-      return res.send(`id_list_message=t-${resetText}&go_to_folder=/1`);
+      const audioUrl = await createAudioResponse("השיחה אופסה בהצלחה במה אוכל לעזור", callId, req);
+      return res.send(audioUrl ? `id_list_message=f-${audioUrl}&go_to_folder=/1` : `id_list_message=t-השיחה אופסה בהצלחה&go_to_folder=/1`);
     }
 
-    // --- טעינה ועדכון של היסטוריית השיחה ---
     let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
-    
     if (userSession.timer) clearTimeout(userSession.timer);
-    userSession.timer = setTimeout(() => {
-      console.log(`[History] עברו 10 דקות, מוחק היסטוריית שיחה עבור ${userPhone}`);
-      conversationHistory.delete(userPhone);
-    }, 10 * 60 * 1000);
+    userSession.timer = setTimeout(() => conversationHistory.delete(userPhone), 10 * 60 * 1000);
 
     let finalAnswerText = "";
-
     const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
 
-    // --- 3. תשובה מ-OpenRouter ---
+    // מענה מ-OpenRouter
     if (openRouterApiKey && transcribedText.trim().length > 0) {
       try {
-        console.log("[OpenRouter] שולח בקשה עם היסטוריית שיחה ל-openrouter/free...");
-
-        const messagesPayload = [
-          { role: "system", content: systemInstruction },
-          ...userSession.history,
-          { role: "user", content: transcribedText }
-        ];
-
+        const messagesPayload = [{ role: "system", content: systemInstruction }, ...userSession.history, { role: "user", content: transcribedText }];
         const openRouterCompletion = await axios.post(
           "https://openrouter.ai/api/v1/chat/completions",
-          {
-            model: "openrouter/free",
-            messages: messagesPayload,
-            temperature: 0.6
-          },
-          {
-            headers: {
-              "Authorization": `Bearer ${openRouterApiKey}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": "https://render.com",
-              "X-Title": "Yemot Telephony AI"
-            },
-            timeout: 10000
-          }
+          { model: "openrouter/free", messages: messagesPayload, temperature: 0.6 },
+          { headers: { "Authorization": `Bearer ${openRouterApiKey}`, "Content-Type": "application/json" }, timeout: 10000 }
         );
-
         finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-        if (finalAnswerText) {
-          console.log("[OpenRouter] התקבלה תשובה בהצלחה!");
-        }
-      } catch (err) {
-        console.error("[OpenRouter שגיאה]:", err.response?.status, err.response?.data || err.message);
-      }
+      } catch (err) {}
     }
 
-    // --- 4. Fallback - Gemini ---
+    // Fallback - Gemini
     if (!finalAnswerText && geminiKeys.length > 0) {
-      console.log("[Gemini] מפעיל גיבוי מול גוגל עם היסטוריית שיחה...");
-      const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
-
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "מבין, אענה בקצרה בהתאם להנחיות ובהתבסס על ההיסטוריה." }] }
+        { role: "model", parts: [{ text: "מבין, אענה בקצרה." }] }
       ];
-
-      userSession.history.forEach((msg) => {
-        geminiContents.push({
-          role: msg.role === "assistant" ? "model" : "user",
-          parts: [{ text: msg.content }]
-        });
-      });
+      userSession.history.forEach(msg => geminiContents.push({ role: msg.role === "assistant" ? "model" : "user", parts: [{ text: msg.content }] }));
 
       if (transcribedText) {
         geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
       } else {
-        geminiContents.push({
-          role: "user",
-          parts: [
-            { text: "ענה בקצרה בהתאם להקלטה:" },
-            { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }
-          ]
-        });
+        geminiContents.push({ role: "user", parts: [{ text: "ענה בקצרה:" }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] });
       }
 
-      const payload = { contents: geminiContents };
-
       keyLoop:
-      for (let i = 0; i < geminiKeys.length; i++) {
-        const apiKey = geminiKeys[i];
-        console.log(`[Gemini] מנסה מפתח API מס' ${i + 1}...`);
-
-        for (const model of geminiModels) {
+      for (const apiKey of geminiKeys) {
+        for (const model of ["gemini-2.5-flash-lite", "gemini-2.5-flash"]) {
           try {
-            console.log(`[Gemini] מנסה דגם: ${model}...`);
-            const response = await callGeminiWithRetry(model, payload, apiKey);
-
+            const response = await callGeminiWithRetry(model, { contents: geminiContents }, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
-              console.log(`[Gemini] התקבלה תשובה מדגם ${model} באמצעות מפתח מס' ${i + 1}!`);
               break keyLoop;
             }
-          } catch (err) {
-            console.error(`[Gemini שגיאה במפתח ${i + 1} בדגם ${model}]:`, err.response?.status, err.response?.data || err.message);
-          }
+          } catch (err) {}
         }
       }
     }
 
-    if (!finalAnswerText) {
-      throw new Error("לא התקבלה תשובה מאיש ספק (OpenRouter / Gemini).");
-    }
-
-    // --- 5. ניקוי ופורמט טקסט עבור ימות המשיח ---
-    const cleanText = formatTextForYemot(finalAnswerText);
-
-    console.log("תשובה מפורמטת להקראה:", cleanText);
+    if (!finalAnswerText) throw new Error("אין תשובה מאיש ספק.");
 
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
@@ -306,20 +287,24 @@ const handleAudioRequest = async (req, res) => {
       conversationHistory.set(userPhone, userSession);
     }
 
-    if (callId) {
-      processedCalls.set(callId, true);
-      setTimeout(() => processedCalls.delete(callId), 5000);
+    // יצירת קובץ שמע והחזרת תשובה לימות המשיח
+    const cleanAnswer = formatTextForYemot(finalAnswerText);
+    const audioUrl = await createAudioResponse(cleanAnswer, callId, req);
+
+    res.set("Content-Type", "text/plain; charset=utf-8");
+
+    if (audioUrl) {
+      console.log(`[Response] שולח נגן קובץ שמע: ${audioUrl}`);
+      return res.send(`id_list_message=f-${audioUrl}&go_to_folder=/1`);
+    } else {
+      console.log("[Response] TTS נכשל, חוזר להקראה טקסטואלית.");
+      return res.send(`id_list_message=t-${cleanAnswer}&go_to_folder=/1`);
     }
 
-    res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
-
   } catch (error) {
-    console.error("=== שגיאה כוללת במערכת ===");
-    console.error(error.stack || error.message);
+    console.error("=== שגיאה במערכת ===", error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    const errFormatted = formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית");
-    return res.send(`id_list_message=t-${errFormatted}&go_to_folder=/1`);
+    return res.send(`id_list_message=t-חלה שגיאה בעיבוד ההודעה&go_to_folder=/1`);
   }
 };
 
@@ -327,6 +312,4 @@ app.all("/", handleAudioRequest);
 app.all("/process-audio", handleAudioRequest);
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
