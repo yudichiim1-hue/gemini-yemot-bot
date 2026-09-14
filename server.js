@@ -58,13 +58,6 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
-    // בדיקת לחיצת מקש עצירה מטעם ימות המשיח
-    if (params.readkey || params.Text === "#" || params.ivrs_read || params.hangup === "yes") {
-      console.log("[User Interrupted] המשתמש עצר את ההקראה.");
-      res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`go_to_folder=/1`);
-    }
-
     console.log("\n==========================================");
     console.log("--- קריאה חדשה התקבלה ---");
     console.log("Call ID:", callId);
@@ -210,10 +203,10 @@ const handleAudioRequest = async (req, res) => {
 
       keyLoop:
       for (let i = 0; i < geminiKeys.length; i++) {
-        constapiKey = geminiKeys[i];
+        const apiKey = geminiKeys[i];
         for (const model of geminiModels) {
           try {
-            const response = await callGeminiWithRetry(model, payload, geminiKeys[i]);
+            const response = await callGeminiWithRetry(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               if (isGroqTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
@@ -256,7 +249,7 @@ const handleAudioRequest = async (req, res) => {
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
       userSession.history.push({ role: "assistant", content: cleanText });
-      if (userSession.history.length > 6) userSession.history = userSession.history.length > 6 ? userSession.history.slice(-6) : userSession.history;
+      if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
       conversationHistory.set(userPhone, userSession);
     }
 
@@ -265,10 +258,9 @@ const handleAudioRequest = async (req, res) => {
       setTimeout(() => processedCalls.delete(callId), 5000);
     }
 
-    // --- שימוש בפורמט Read תקין ומדויק של ימות המשיח שקולט לחיצת סולמית ומחזיר מיד לתיקיית ההקלטה ---
-    // מבנה ה-Read: קריאת טקסט באורך תו 1 לפחות, מתן אפשרות לעצירה ומעבר מיידי ליעד
+    // שומרים על סוג ההקראה המקורי (id_list_message) ומוסיפים פקודת עצירת הקראה ומעבר ליעד
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`read=t-${cleanText}=,yes,1,1,1,no,yes,yes,no,yes&go_to_folder=/1`);
+    return res.send(`id_list_message=t-${cleanText}&readkey=go,yes,.,#&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===", error.message);
