@@ -1,5 +1,5 @@
 const express = require("express");
-const axios = require("axios");
+const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 
 const app = express();
 
@@ -34,20 +34,20 @@ app.get("/health", (req, res) => {
 });
 
 // פונקציית עזר לקריאות מול Gemini עם מנגנון Retry
-const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2) => {
+const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 1) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios.post(geminiUrl, payload, { 
         headers: { "Content-Type": "application/json" }, 
-        timeout: 10000 
+        timeout: 6000 
       });
       return response;
     } catch (err) {
       const status = err.response?.status;
       if (status === 429 && attempt < maxRetries) {
-        const delay = 2000 * attempt; 
+        const delay = 1000 * attempt; 
         console.warn(`[Gemini 429] חריגת מכסה בדגם ${model}. מנסה שוב בעוד ${delay / 1000} שניות...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
@@ -57,16 +57,17 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 2)
   }
 };
 
-// פונקציית ניקוי אגרסיבית - משאירה אך ורק אותיות בעברית, מספרים ורווחים
+// פונקציית ניקוי בטוחה - משאירה אותיות עברית, מספרים, רווחים, נקודות ופסיקים (חובה למנוע ה-TTS של ימות המשיח)
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
-    .replace(/[^א-ת0-9\s]/g, "") // מוחק כל תו שאינו אות בעברית, מספר או רווח
-    .replace(/\s+/g, " ")        // מאחד רווחים כפולים
+    .replace(/[^א-ת0-9\s,.]/g, "") // שומר עברית, מספרים, רווחים, פסיקים ונקודות
+    .replace(/\s+/g, " ")          // מאחד רווחים כפולים
     .trim();
 };
 
 const handleAudioRequest = async (req, res) => {
+  const startTime = Date.now();
   try {
     const params = { ...req.query, ...req.body };
     const callId = params.ApiCallId || params.ApiYFCallId;
@@ -109,7 +110,7 @@ const handleAudioRequest = async (req, res) => {
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
-        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 7000 });
+        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 4000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
           console.log(`[הצלחה] הקובץ הורד בהצלחה! גודל: ${audioBuffer.length} bytes`);
@@ -123,8 +124,8 @@ const handleAudioRequest = async (req, res) => {
     if (!audioBuffer) {
       console.error("[שגיאה] לא נמצאה הקלטה תקינה.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const errText = formatTextForYemot("לא נמצאה הקלטה תקינה אנא הקלט שוב");
-      return res.send(`id_list_message=m-${encodeURIComponent(errText)}&go_to_folder=/1`);
+      const errText = formatTextForYemot("לא נמצאה הקלטה תקינה. אנא הקלט שוב.");
+      return res.send(`tts=${encodeURIComponent(errText)}&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -154,7 +155,7 @@ const handleAudioRequest = async (req, res) => {
               "Authorization": `Bearer ${groqApiKey}`,
               "Content-Type": `multipart/form-data; boundary=${boundary}`
             },
-            timeout: 10000
+            timeout: 5000
           }
         );
 
@@ -181,8 +182,8 @@ const handleAudioRequest = async (req, res) => {
       }
 
       res.set("Content-Type", "text/plain; charset=utf-8");
-      const resetText = formatTextForYemot("השיחה אופסה בהצלחה במה אוכל לעזור");
-      return res.send(`id_list_message=m-${encodeURIComponent(resetText)}&go_to_folder=/1`);
+      const resetText = formatTextForYemot("השיחה אופסה בהצלחה. במה אוכל לעזור?");
+      return res.send(`tts=${encodeURIComponent(resetText)}&go_to_folder=/1`);
     }
 
     // --- טעינה ועדכון של היסטוריית השיחה ---
@@ -196,7 +197,7 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
 
-    const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, ללא סימני פיסוק, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
+    const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד. מותר להשתמש בנקודות ופסיקים בלבד. ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
 
     // --- 3. תשובה מ-OpenRouter ---
     if (openRouterApiKey && transcribedText.trim().length > 0) {
@@ -223,7 +224,7 @@ const handleAudioRequest = async (req, res) => {
               "HTTP-Referer": "https://render.com",
               "X-Title": "Yemot Telephony AI"
             },
-            timeout: 10000
+            timeout: 6000
           }
         );
 
@@ -243,7 +244,7 @@ const handleAudioRequest = async (req, res) => {
 
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "מבין, אענה בקצרה בהתאם להנחיות ובהתבסס על ההיסטוריה." }] }
+        { role: "model", parts: [{ text: "מבין. אענה בקצרה בהתאם להנחיות." }] }
       ];
 
       userSession.history.forEach((msg) => {
@@ -297,6 +298,7 @@ const handleAudioRequest = async (req, res) => {
     const cleanText = formatTextForYemot(finalAnswerText);
 
     console.log("תשובה מפורמטת להקראה:", cleanText);
+    console.log(`זמן כולל לעיבוד הקריאה: ${Date.now() - startTime}ms`);
 
     if (transcribedText) {
       userSession.history.push({ role: "user", content: transcribedText });
@@ -310,14 +312,14 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=m-${encodeURIComponent(cleanText)}&go_to_folder=/1`);
+    return res.send(`tts=${encodeURIComponent(cleanText)}&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===");
     console.error(error.stack || error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    const errFormatted = formatTextForYemot("חלה שגיאה בעיבוד ההודעה אנא נסה שנית");
-    return res.send(`id_list_message=m-${encodeURIComponent(errFormatted)}&go_to_folder=/1`);
+    const errFormatted = formatTextForYemot("חלה שגיאה בעיבוד ההודעה. אנא נסה שנית.");
+    return res.send(`tts=${encodeURIComponent(errFormatted)}&go_to_folder=/1`);
   }
 };
 
