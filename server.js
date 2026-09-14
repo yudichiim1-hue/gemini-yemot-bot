@@ -7,18 +7,6 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
 const processedCalls = new Map();
-const conversationHistory = new Map();
-
-const RESET_TRIGGERS = [
-  "תתחיל מחדש",
-  "תתחילי מחדש",
-  "אפס שיחה",
-  "איפוס שיחה",
-  "שיחה חדשה",
-  "התחל מחדש",
-  "תמחק היסטוריה",
-  "ניקוי היסטוריה"
-];
 
 app.get("/ping", (req, res) => {
   res.status(200).send("PONG");
@@ -37,11 +25,9 @@ const formatTextForYemot = (text) => {
 };
 
 const handleAudioRequest = async (req, res) => {
-  const startTime = Date.now();
   try {
     const params = { ...req.query, ...req.body };
     const callId = params.ApiCallId || params.ApiYFCallId;
-    const userPhone = params.ApiPhone || params.phone || "default_user";
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
@@ -50,7 +36,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (callId && processedCalls.has(callId)) {
       processedCalls.delete(callId);
-      res.set("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
       return res.send("go_to_folder=/1");
     }
 
@@ -80,7 +66,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!audioBuffer) {
-      res.set("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
       return res.send("id_list_message=m-לא נמצאה הקלטה תקינה");
     }
 
@@ -119,7 +105,7 @@ const handleAudioRequest = async (req, res) => {
     let finalAnswerText = "";
     const systemInstruction = "ענה בעברית פשוטה בלבד, ללא סימני פיסוק, ללא מספרים, עד 2 משפטים.";
 
-    // תשובה מ-Gemini (ישיר ובטוח)
+    // תשובה מ-Gemini
     if (geminiApiKey) {
       try {
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiApiKey}`;
@@ -129,7 +115,7 @@ const handleAudioRequest = async (req, res) => {
           ]
         }, { timeout: 6000 });
 
-        finalAnswerText = response.data?.candidates??. [0]?.content?.parts?.[0]?.text || "";
+        finalAnswerText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
       } catch (err) {}
     }
 
@@ -144,7 +130,6 @@ const handleAudioRequest = async (req, res) => {
       setTimeout(() => processedCalls.delete(callId), 5000);
     }
 
-    // פורמט תגובה נקי לחלוטין בלי שום תווים מיותרים שיכולים להכשיל את ימות המשיח
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     return res.status(200).send(`id_list_message=m-${encodeURIComponent(cleanText)}`);
 
