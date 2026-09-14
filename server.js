@@ -35,7 +35,7 @@ const callGeminiWithRetry = async (model, payload, geminiApiKey, maxRetries = 1)
     try {
       const response = await axios.post(geminiUrl, payload, { 
         headers: { "Content-Type": "application/json" }, 
-        timeout: 4000 
+        timeout: 12000 
       });
       return response;
     } catch (err) {
@@ -95,19 +95,18 @@ const handleAudioRequest = async (req, res) => {
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
 
-    // הורדה מהירה מאוד כדי לא לעכב את ימות המשיח
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
-        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 2500 });
+        const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 8000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
           break;
         }
       } catch (err) {
-        // ממשיך הלאה מיד אם הנתיב נכשל
+        // ממשיך הלאה אם הנתיב נכשל
       }
     }
 
@@ -143,7 +142,7 @@ const handleAudioRequest = async (req, res) => {
               "Authorization": `Bearer ${groqApiKey}`,
               "Content-Type": `multipart/form-data; boundary=${boundary}`
             },
-            timeout: 3500
+            timeout: 10000
           }
         );
 
@@ -203,7 +202,7 @@ const handleAudioRequest = async (req, res) => {
               "HTTP-Referer": "https://render.com",
               "X-Title": "Yemot Telephony AI"
             },
-            timeout: 4000
+            timeout: 12000
           }
         );
 
