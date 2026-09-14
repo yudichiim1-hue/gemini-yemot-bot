@@ -157,9 +157,16 @@ const handleAudioRequest = async (req, res) => {
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
 
-    // --- Gemini עם חיבור חינמי לחיפוש של גוגל (Google Search Grounding) ---
+    // --- בדיקה האם המשתמש ביקש מפורשות לחפש בגוגל ("חפש" או "חפשי") ---
+    const needsSearch = lowerTranscription.startsWith("חפש") || lowerTranscription.startsWith("חפשי") || lowerTranscription.includes(" חפש ") || lowerTranscription.includes(" חפשי ");
+
+    if (needsSearch) {
+      console.log("[Search Triggered] המשתמש ביקש חיפוש חי באינטרנט.");
+    }
+
+    // --- Gemini (עם הפעלת חיפוש גוגל רק אם המשתמש ביקש זאת במפורש) ---
     if (geminiKeys.length > 0) {
-      console.log("[Gemini + Search] מפעיל גישה לחיפוש גוגל מול גוגל...");
+      console.log("[Gemini] מפעיל בקשה מול גוגל...");
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
       const geminiContents = [
@@ -186,11 +193,14 @@ const handleAudioRequest = async (req, res) => {
         geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
       }
 
-      // הוספת כלי החיפוש של גוגל בחינם לבקשה
+      // הרכבת ה-Payload - כלי החיפוש יצורף אך ורק אם המשתמש אמר "חפש/חפשי"
       const payload = {
-        contents: geminiContents,
-        tools: [{ googleSearch: {} }]
+        contents: geminiContents
       };
+
+      if (needsSearch) {
+        payload.tools = [{ googleSearch: {} }];
+      }
 
       keyLoop:
       for (let i = 0; i < geminiKeys.length; i++) {
