@@ -1,6 +1,5 @@
 const express = require("express");
 const axios = require("axios");
-const fs = require("fs");
 const path = require("path");
 
 const app = express();
@@ -8,16 +7,8 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
-// תיקייה לשמירת קובצי השמע של ElevenLabs
-const audioDir = path.join(__dirname, "audio");
-if (!fs.existsSync(audioDir)) {
-  fs.mkdirSync(audioDir);
-}
-
-// הגשת קובצי השמע באופן ציבורי עבור ימות המשיח
-app.use("/audio", express.static(audioDir));
-
-// זיכרון לשיחות והיסטוריה
+// זיכרון זמני לשמירת קובצי שמע בזיכרון (RAM) בלבד
+const audioCache = new Map();
 const processedCalls = new Map();
 const conversationHistory = new Map();
 
@@ -27,16 +18,39 @@ const RESET_TRIGGERS = [
   "תמחק היסטוריה", "ניקוי היסטוריה"
 ];
 
-// --- יצירת קובץ שמע ב-ElevenLabs ---
-const generateElevenLabsTTS = async (text, filePath, apiKey) => {
-  if (!apiKey) {
-    console.log("[TTS] לא מוגדר מפתח ElevenLabs");
-    return false;
+// --- נתיב להורדת ה-MP3 ע"י ימות המשיח ---
+app.get("/audio/:id.mp3", (req, res) => {
+  const audioId = req.params.id;
+  const audioBuffer = audioCache.get(audioId);
+
+  if (!audioBuffer) {
+    console.error(`[Audio Request] קובץ לא נמצא בזיכרון: ${audioId}`);
+    return res.status(404).send("Audio not found");
   }
-  
+
+  console.log(`[Audio Request] מגיש קובץ שמע לימות המשיח: ${audioId}`);
+  res.set({
+    "Content-Type": "audio/mpeg",
+    "Content-Length": audioBuffer.length,
+    "Cache-Control": "public, max-age=300"
+  });
+
+  res.send(audioBuffer);
+
+  // ניקוי הקובץ מהזיכרון כבור 3 דקות
+  setTimeout(() => audioCache.delete(audioId), 180000);
+});
+
+// --- יצירת שמע ב-ElevenLabs ---
+const generateElevenLabsTTS = async (text, apiKey) => {
+  if (!apiKey) {
+    console.log("[TTS] חסר מפתח ElevenLabs");
+    return null;
+  }
+
   try {
-    // קול ברירת מחדל: Aria (נשי וטבעי מאוד בעברית). ניתן לשינוי דרך משתני הסביבה
-    const voiceId = process.env.ELEVENLABS_VOICE_ID || "9BWtsm13b0A823eC22fA"; 
+    // קול Aria (נשי וטבעי). ניתן לשינוי דרך ELEVENLABS_VOICE_ID ב-Render
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || "9BWtsm13b0A823eC22fA";
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
     const response = await axios.post(
@@ -56,39 +70,38 @@ const generateElevenLabsTTS = async (text, filePath, apiKey) => {
       }
     );
 
-    await fs.promises.writeFile(filePath, Buffer.from(response.data));
-    console.log("[TTS] נוצר בהצלחה באמצעות ElevenLabs!");
-    return true;
+    console.log("[TTS] נוצר בהצלחה מ-ElevenLabs!");
+    return Buffer.from(response.data);
   } catch (err) {
-    console.warn(`[ElevenLabs Error]: ${err.response?.status || err.message}`);
-    return false;
+    console.error(`[ElevenLabs Error]: ${err.response?.status || err.message}`);
+    return null;
   }
 };
 
-// --- יצירת תגובת שמע ---
+// --- יצירת תגובת שמע לקבלת קישור מ-ElevenLabs ---
 const createAudioResponse = async (text, callId, req) => {
-  const filename = `speech_${callId || Date.now()}_${Math.floor(Math.random() * 1000)}.mp3`;
-  const filePath = path.join(audioDir, filename);
   const elevenKey = (process.env.ELEVENLABS_API_KEY || "").trim();
+  const audioBuffer = await generateElevenLabsTTS(text, elevenKey);
 
-  const success = await generateElevenLabsTTS(text, filePath, elevenKey);
+  if (audioBuffer) {
+    const audioId = `speech_${callId || Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    audioCache.set(audioId, audioBuffer);
 
-  if (success) {
     const protocol = req.headers["x-forwarded-proto"] || "https";
     const host = req.headers["host"] || process.env.RENDER_EXTERNAL_HOSTNAME;
-    return `${protocol}://${host}/audio/${filename}`;
+    return `${protocol}://${host}/audio/${audioId}.mp3`;
   }
 
   return null;
 };
 
-// ניקוי פורמט הטקסט עבור ימות המשיח / TTS
+// ניקוי טקסט לשפה עברית בלבד
 const formatTextForYemot = (text) => {
   if (!text) return "";
   return text
-    .replace(/[a-zA-Z]/g, "")
+    .replace(/[a-zA-Z]/g, "") // הסרת אותיות באנגלית
     .replace(/[\n\r\t]/g, " ")
-    .replace(/[^א-ת0-9\s,.?]/g, "")
+    .replace(/[^א-ת0-9\s,.?]/g, "") // השארת תווים בעברית, מספרים וסימני פיסוק בלבד
     .replace(/\s+/g, " ")
     .trim();
 };
@@ -162,7 +175,7 @@ const handleAudioRequest = async (req, res) => {
 
     let transcribedText = "";
 
-    // תמלול דרך Groq Whisper
+    // תמלול ב-Groq בעברית בלבד
     if (groqApiKey) {
       try {
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
@@ -205,7 +218,9 @@ const handleAudioRequest = async (req, res) => {
     userSession.timer = setTimeout(() => conversationHistory.delete(userPhone), 10 * 60 * 1000);
 
     let finalAnswerText = "";
-    const systemInstruction = "אתה עוזר קולי בשיחת טלפון. ענה בעברית פשוטה בלבד, ללא רשימות, ללא מספרים, ללא נקודתיים, וללא אנגלית. עד 2 משפטים רציפים. התבסס על היסטוריית השיחה.";
+    
+    // הוראות קשוחות למענה בעברית בלבד ללא מילים בלועזית
+    const systemInstruction = "אתה עוזר קולי בשיחת טלפון. חובה לענות בשפה העברית בלבד ובאותיות עבריות בלבד. ללא מילים באנגלית, ללא רשימות, ללא מספרים, וללא נקודתיים. ענה בקיצור עד 2 משפטים רציפים בלבד.";
 
     // מענה מ-OpenRouter
     if (openRouterApiKey && transcribedText.trim().length > 0) {
@@ -224,14 +239,14 @@ const handleAudioRequest = async (req, res) => {
     if (!finalAnswerText && geminiKeys.length > 0) {
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "מבין, אענה בקצרה." }] }
+        { role: "model", parts: [{ text: "מבין, אענה בעברית בלבד ובקצרה." }] }
       ];
       userSession.history.forEach(msg => geminiContents.push({ role: msg.role === "assistant" ? "model" : "user", parts: [{ text: msg.content }] }));
 
       if (transcribedText) {
         geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
       } else {
-        geminiContents.push({ role: "user", parts: [{ text: "ענה בקצרה:" }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] });
+        geminiContents.push({ role: "user", parts: [{ text: "ענה בעברית בלבד:" }, { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }] });
       }
 
       keyLoop:
@@ -256,17 +271,17 @@ const handleAudioRequest = async (req, res) => {
       conversationHistory.set(userPhone, userSession);
     }
 
-    // יצירת קובץ שמע והחזרת תשובה לימות המשיח
+    // ניקוי הטקסט ויצירת השמע בעברית בלבד
     const cleanAnswer = formatTextForYemot(finalAnswerText);
     const audioUrl = await createAudioResponse(cleanAnswer, callId, req);
 
     res.set("Content-Type", "text/plain; charset=utf-8");
 
     if (audioUrl) {
-      console.log(`[Response] שולח נגן קובץ שמע מ-ElevenLabs: ${audioUrl}`);
+      console.log(`[Response] שולח נגן קובץ שמע: ${audioUrl}`);
       return res.send(`id_list_message=f-${audioUrl}&go_to_folder=/1`);
     } else {
-      console.log("[Response] TTS נכשל או שלא מוגדר מפתח, חוזר להקראה של ימות המשיח.");
+      console.log("[Response] TTS נכשל, חוזר להקראה טקסטואלית.");
       return res.send(`id_list_message=t-${cleanAnswer}&go_to_folder=/1`);
     }
 
