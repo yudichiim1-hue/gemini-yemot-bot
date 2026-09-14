@@ -1,10 +1,10 @@
 {
   "name": "yemot-telephony-ai",
   "version": "1.0.0",
-  "description": "Yemot Telephony AI Integration with ElevenLabs TTS",
-  "main": "server.js",
+  "description": "Yemot Telephony AI Integration with Groq, OpenRouter and Gemini",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
