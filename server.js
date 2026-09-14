@@ -153,9 +153,7 @@ const handleAudioRequest = async (req, res) => {
     userSession.timer = setTimeout(() => conversationHistory.delete(userPhone), 10 * 60 * 1000);
 
     let finalAnswerText = "";
-    
-    // --- שדרוג הנחיית המערכת: מאפשר אנגלית ונתונים באנגלית כשנדרש ---
-    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. הימנע מסימני פיסוק מיותרים והקפד על תשובה ישירה לשאלה.";
+    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה לשאלה.";
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     const needsSearch = lowerTranscription.startsWith("חפש") || lowerTranscription.startsWith("חפשי") || lowerTranscription.includes(" חפש ") || lowerTranscription.includes(" חפשי ");
@@ -165,7 +163,7 @@ const handleAudioRequest = async (req, res) => {
 
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "מבין, אענה באופן מדויק כולל אנגלית ומספרים לפי הצורך." }] }
+        { role: "model", parts: [{ text: "מבין אענה באופן מדויק כולל אנגלית ומספרים לפי הצורך." }] }
       ];
 
       userSession.history.forEach((msg) => {
@@ -230,9 +228,9 @@ const handleAudioRequest = async (req, res) => {
       finalAnswerText = "סליחה לא הבנתי את דבריך אנא נסה שנית";
     }
 
-    // --- ניקוי מעודן ששומר על אותיות באנגלית, מספרים ורווחים, ומסיר רק סימני פיסוק בעייתיים ---
+    // --- ניקוי מחמיר שמוחק פסיקים וכל סימני הפיסוק, אבל שומר על אנגלית, עברית ומספרים ---
     const cleanText = finalAnswerText
-      .replace(/[?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
+      .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
       .replace(/\s+/g, " ")                                 
       .trim();
 
