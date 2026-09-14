@@ -1,14 +1,14 @@
 {
-  "name": "gemini-yemot-bot",
+  "name": "yemot-telephony-ai",
   "version": "1.0.0",
-  "description": "Integration between Yemot HaMashiach IVR and Google Gemini API",
-  "main": "server.js",
+  "description": "Yemot Telephony AI Integration with ElevenLabs and Edge TTS",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
-    "axios": "^1.6.8",
+    "axios": "^1.7.0",
+    "edge-tts": "^1.0.2",
     "express": "^4.19.2"
   },
   "engines": {
