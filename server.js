@@ -58,13 +58,18 @@ const handleAudioRequest = async (req, res) => {
 
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const groqApiKey = (process.env.GROQ_API_KEY || "").trim();
-    const openRouterApiKey = (process.env.OPENROUTER_API_KEY || "").trim();
     
-    // טעינת עד 3 מפתחות Gemini שונים
+    // טעינת מפתחות Gemini (עד 3)
     const geminiKeys = [
       (process.env.GEMINI_API_KEY || "").trim(),
       (process.env.GEMINI_API_KEY_1 || "").trim(),
       (process.env.GEMINI_API_KEY_2 || "").trim()
+    ].filter(key => key.length > 0);
+
+    // טעינת מפתחות OpenRouter (עד 2: OPENROUTER_API_KEY ו-OPENROUTER_API_KEY_1)
+    const openRouterKeys = [
+      (process.env.OPENROUTER_API_KEY || "").trim(),
+      (process.env.OPENROUTER_API_KEY_1 || "").trim()
     ].filter(key => key.length > 0);
 
     let audioBuffer = null;
@@ -160,7 +165,7 @@ const handleAudioRequest = async (req, res) => {
       lowerTranscription.includes("עדכונים") ||
       lowerTranscription.includes("היום");
 
-    // --- מעבר על כל מפתחות ה-Gemini ---
+    // --- שלב 1: מעבר על מפתחות Gemini ---
     if (geminiKeys.length > 0 && !finalAnswerText) {
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
@@ -211,29 +216,38 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- Fallback ל-OpenRouter אם Gemini נכשל ---
-    if (!finalAnswerText && openRouterApiKey && transcribedText.length > 0) {
-      try {
-        const messagesPayload = [
-          { role: "system", content: systemInstruction },
-          ...userSession.history,
-          { role: "user", content: transcribedText }
-        ];
+    // --- שלב 2: מעבר על מפתחות OpenRouter (תמיכה בריבוי מפתחות) ---
+    if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
+      const messagesPayload = [
+        { role: "system", content: systemInstruction },
+        ...userSession.history,
+        { role: "user", content: transcribedText }
+      ];
 
-        const openRouterCompletion = await axios.post(
-          "https://openrouter.ai/api/v1/chat/completions",
-          { model: "openrouter/free", messages: messagesPayload, temperature: 0.3 },
-          { headers: { "Authorization": `Bearer ${openRouterApiKey}`, "Content-Type": "application/json" }, timeout: 6000 }
-        );
+      for (let i = 0; i < openRouterKeys.length; i++) {
+        if (finalAnswerText) break;
+        const orKey = openRouterKeys[i];
+        try {
+          console.log(`[OpenRouter] מנסה מפתח ${i + 1}...`);
+          const openRouterCompletion = await axios.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            { model: "openrouter/free", messages: messagesPayload, temperature: 0.3 },
+            { headers: { "Authorization": `Bearer ${orKey}`, "Content-Type": "application/json" }, timeout: 6000 }
+          );
 
-        finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-      } catch (err) {
-        console.log("[OpenRouter 429] גם OpenRouter חסום.");
+          finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
+          if (finalAnswerText) {
+            console.log(`[OpenRouter Success] הצלחה עם מפתח ${i + 1}`);
+            break;
+          }
+        } catch (err) {
+          console.log(`[OpenRouter 429] מפתח ${i + 1} נכשל.`);
+        }
       }
     }
 
     if (!finalAnswerText) {
-      finalAnswerText = "הגעת למכסה היומית של מפתחות הבינה המלאכותית אנא צור מפתח חדש בוגוגל אי סטודיו והוסף אותו לשרת";
+      finalAnswerText = "הגעת למכסה היומית של מפתחות הבינה המלאכותית אנא צור מפתח חדש בוגוגל אי סטודיו או באופןרוטר והוסף אותו לשרת";
     }
 
     const cleanText = finalAnswerText
