@@ -28,7 +28,6 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date() });
 });
 
-// פונקציית קריאה ל-Gemini בלי לולאות מרובות שגורמות ל-429
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   const response = await axios.post(geminiUrl, payload, { 
@@ -48,16 +47,10 @@ const handleAudioRequest = async (req, res) => {
 
     console.log("\n==================================================");
     console.log("📞 [ימות המשיח] התקבלה פנייה חדשה מהמערכת!");
-    console.log("--------------------------------------------------");
-    console.log(`📌 מספר טלפון מתקשר (ApiPhone): ${userPhone}`);
-    console.log(`🆔 מזהה שיחה ייחודי (CallId): ${callId || 'לא זוהה'}`);
-    console.log(`📂 תיקייה ראשית (SHM): ${primaryFolder}`);
-    console.log(`📂 תיקייה משנית/קודמת (SHL): ${secondaryFolder}`);
-    console.log(`🌐 כתובת קובץ שהועברה (path/file): ${params.path || params.file || 'לא הועבר'}`);
+    console.log(`📌 מספר טלפון מתקשר: ${userPhone}`);
     console.log("==================================================\n");
 
     if (callId && processedCalls.has(callId)) {
-      console.log(`[Duplicate Call] שיחה כפולה זוהתה עבור Call ID: ${callId}. מדלג ומחזיר ניתוב לתיקייה /1.`);
       processedCalls.delete(callId);
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
@@ -67,9 +60,11 @@ const handleAudioRequest = async (req, res) => {
     const groqApiKey = (process.env.GROQ_API_KEY || "").trim();
     const openRouterApiKey = (process.env.OPENROUTER_API_KEY || "").trim();
     
+    // טעינת עד 3 מפתחות Gemini שונים
     const geminiKeys = [
       (process.env.GEMINI_API_KEY || "").trim(),
-      (process.env.GEMINI_API_KEY_1 || "").trim()
+      (process.env.GEMINI_API_KEY_1 || "").trim(),
+      (process.env.GEMINI_API_KEY_2 || "").trim()
     ].filter(key => key.length > 0);
 
     let audioBuffer = null;
@@ -80,27 +75,20 @@ const handleAudioRequest = async (req, res) => {
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
 
-    console.log("[Audio Download] מנסה להוריד את קובץ הקול מהנתיבים האפשריים:", possiblePaths);
-
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
-        console.log(`[Audio Download] מנסה להוריד נתיב: ${cleanPath}`);
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 6000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          console.log(`[Audio Download] הצלחה! הורד קובץ בגודל ${audioBuffer.length} בתים מנתיב: ${cleanPath}`);
           break;
         }
-      } catch (err) {
-        console.log(`[Audio Download Fail] נכשל בהורדת הנתיב ${cleanPath}`);
-      }
+      } catch (err) {}
     }
 
     if (!audioBuffer) {
-      console.log("[Audio Error] לא נמצאה הקלטה תקינה באף אחד מהנתיבים!");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/1`);
     }
@@ -109,7 +97,6 @@ const handleAudioRequest = async (req, res) => {
 
     if (groqApiKey) {
       try {
-        console.log("[Groq Whisper] שולח קובץ שמע לתמלול ב-Groq...");
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
@@ -136,17 +123,13 @@ const handleAudioRequest = async (req, res) => {
         );
 
         transcribedText = (transcriptionResponse.data?.text || "").trim();
-        console.log(`[Groq Whisper Success] תוצאת תמלול: "${transcribedText}"`);
-      } catch (err) {
-        console.error("[Groq Whisper Error] שגיאה בתמלול Groq:", err.message);
-      }
+      } catch (err) {}
     }
 
     const lowerTranscription = transcribedText.toLowerCase();
     const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
 
     if (isResetRequested) {
-      console.log(`[Reset] זוהתה בקשת איפוס שיחה מהמשתמש (${userPhone}).`);
       const existingSession = conversationHistory.get(userPhone);
       if (existingSession?.timer) clearTimeout(existingSession.timer);
       conversationHistory.delete(userPhone);
@@ -177,11 +160,7 @@ const handleAudioRequest = async (req, res) => {
       lowerTranscription.includes("עדכונים") ||
       lowerTranscription.includes("היום");
 
-    if (needsSearch) {
-      console.log("🔍 [Search Triggered] מפעיל חיפוש חי באינטרנט.");
-    }
-
-    // --- שלב 1: ניסיון מול Gemini עם מנגנון מעבר חלק בין מפתחות ומודלים ---
+    // --- מעבר על כל מפתחות ה-Gemini ---
     if (geminiKeys.length > 0 && !finalAnswerText) {
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
@@ -219,25 +198,22 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`[Gemini] מנסה מפתח ${k+1}, מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               if (isGroqTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
-              console.log(`[Gemini Success] הצלחה עם מודל ${model}`);
               break;
             }
           } catch (err) {
-            console.log(`[Gemini 429/Error] מודל ${model} נכשל (${err.response?.status || err.message}), עובר הלאה...`);
+            console.log(`[Gemini 429] מפתח ${k+1} מודל ${model} חרג ממכסה.`);
           }
         }
       }
     }
 
-    // --- שלב 2: Fallback ל-OpenRouter אם Gemini נכשל או חסום ב-429 ---
+    // --- Fallback ל-OpenRouter אם Gemini נכשל ---
     if (!finalAnswerText && openRouterApiKey && transcribedText.length > 0) {
       try {
-        console.log("[OpenRouter Fallback] מנסה לקבל תשובה מ-OpenRouter...");
         const messagesPayload = [
           { role: "system", content: systemInstruction },
           ...userSession.history,
@@ -251,14 +227,13 @@ const handleAudioRequest = async (req, res) => {
         );
 
         finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-        console.log("[OpenRouter Success] התקבלה תשובה מ-OpenRouter.");
       } catch (err) {
-        console.error("[OpenRouter Error] שגיאה ב-OpenRouter:", err.message);
+        console.log("[OpenRouter 429] גם OpenRouter חסום.");
       }
     }
 
     if (!finalAnswerText) {
-      finalAnswerText = "כרגע יש עומס על שרתי הבינה המלאכותית אנא נסי שנית בעוד מספר רגעים";
+      finalAnswerText = "הגעת למכסה היומית של מפתחות הבינה המלאכותית אנא צור מפתח חדש בוגוגל אי סטודיו והוסף אותו לשרת";
     }
 
     const cleanText = finalAnswerText
@@ -266,7 +241,7 @@ const handleAudioRequest = async (req, res) => {
       .replace(/\s+/g, " ")                                 
       .trim();
 
-    console.log(`💬 [Final Answer] תשובה סופית: "${cleanText}"`);
+    console.log(`💬 [Final Answer]: "${cleanText}"`);
 
     if (transcribedText && !transcribedText.startsWith("[שמע")) {
       userSession.history.push({ role: "user", content: transcribedText });
@@ -284,7 +259,7 @@ const handleAudioRequest = async (req, res) => {
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
 
   } catch (error) {
-    console.error("❌ === שגיאה כוללת במערכת ===", error.message);
+    console.error("❌ === שגיאה כללית ===", error.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-חלה שגיאה במערכת אנא נסה שנית&go_to_folder=/1`);
   }
