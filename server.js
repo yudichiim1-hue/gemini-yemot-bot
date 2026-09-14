@@ -111,7 +111,7 @@ const handleAudioRequest = async (req, res) => {
         const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
         let formDataHeader = `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nhe\r\n`;
-        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nמה חדש, תמלל בעברית תקנית בלבד.\r\n`;
+        formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nתמלל בעברית תקנית בלבד, כולל סלנג וביטויים ישראליים. אל תמציא מילים.\r\n`;
         formDataHeader += `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`;
         const formDataFooter = `\r\n--${boundary}--\r\n`;
 
@@ -154,10 +154,12 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
     
-    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
+    // --- הנחיית מערכת מעודכנת שמונעת התנצלויות על חוסר אינטרנט ---
+    const systemInstruction = "אתה עוזר קולי חכם בשיחת טלפון. ענה בצורה טבעית, מדויקת ומפורטת במידת הצורך. לעולם אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. מותר ואף רצוי להשתמש במספרים, נתונים עובדתיים ואותיות או מילים באנגלית כאשר השאלה דורשת זאת. כשאתה נותן קודים או מילים באנגלית שיש להקריא אות אחר אות הפד והפרד כל אות באנגלית ברווח ברור (למשל A I W P R T O N). הימנע מסימני פיסוק או פסיקים והקפד על תשובה ישירה.";
 
     const isGroqTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     
+    // --- הרחבת תנאי החיפוש: מפעיל חיפוש אוטומטי גם כששואלים על חדשות, מה חדש, עדכונים או "חפש" ---
     const needsSearch = 
       lowerTranscription.startsWith("חפש") || 
       lowerTranscription.startsWith("חפשי") || 
@@ -168,6 +170,10 @@ const handleAudioRequest = async (req, res) => {
       lowerTranscription.includes("עדכון") ||
       lowerTranscription.includes("עדכונים") ||
       lowerTranscription.includes("היום");
+
+    if (needsSearch) {
+      console.log("[Search Triggered] מפעיל חיפוש חי באינטרנט עבור השאלה.");
+    }
 
     if (geminiKeys.length > 0) {
       const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
@@ -258,9 +264,8 @@ const handleAudioRequest = async (req, res) => {
       setTimeout(() => processedCalls.delete(callId), 5000);
     }
 
-    // שומרים על סוג ההקראה המקורי (id_list_message) ומוסיפים פקודת עצירת הקראה ומעבר ליעד
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}&readkey=go,yes,.,#&go_to_folder=/1`);
+    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
 
   } catch (error) {
     console.error("=== שגיאה כוללת במערכת ===", error.message);
