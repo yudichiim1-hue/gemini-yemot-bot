@@ -9,6 +9,41 @@ app.use(express.json({ limit: "50mb" }));
 const processedCalls = new Map();
 const conversationHistory = new Map();
 
+// משתנה לניהול הפוגה עבור Gemini
+let geminiCooldownUntil = 0;
+
+// [שיפור 1]: ניקוי זיכרון תקופתי (פעם בשעה) ומניעת זליגת זיכרון
+setInterval(() => {
+  const now = Date.now();
+  console.log("🧹 מפעיל ניקוי זיכרון תקופתי להסטוריית השיחות...");
+  for (const [phone, session] of conversationHistory.entries()) {
+    if (session.lastActive && now - session.lastActive > 10 * 60 * 1000) {
+      if (session.timer) clearTimeout(session.timer);
+      conversationHistory.delete(phone);
+    }
+  }
+  // אם עדיין יש יתר על המידה, מגבילים ל-500 שיחות אחרונות
+  if (conversationHistory.size > 500) {
+    const oldestKeys = Array.from(conversationHistory.keys()).slice(0, conversationHistory.size - 500);
+    oldestKeys.forEach((key) => conversationHistory.delete(key));
+  }
+}, 60 * 60 * 1000);
+
+// [שיפור 4]: פונקציה לנרמול טקסט (הסרת אותיות סופיות, ניקוד ורווחים)
+const normalizeText = (text) => {
+  if (!text) return "";
+  return text
+    .replace(/[\u0591-\u05C7]/g, "") // הסרת ניקוד
+    .replace(/ם/g, "מ")
+    .replace(/ן/g, "נ")
+    .replace(/ץ/g, "צ")
+    .replace(/ף/g, "פ")
+    .replace(/ך/g, "כ")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
 const RESET_TRIGGERS = [
   "תתחיל מחדש",
   "תתחילי מחדש",
@@ -18,7 +53,7 @@ const RESET_TRIGGERS = [
   "התחל מחדש",
   "תמחק היסטוריה",
   "ניקוי היסטוריה"
-];
+].map(normalizeText);
 
 const DEEP_DETAILS_TRIGGERS = [
   "תתעמק",
@@ -31,7 +66,7 @@ const DEEP_DETAILS_TRIGGERS = [
   "עוד מידע",
   "פירוט",
   "מידע מפורט"
-];
+].map(normalizeText);
 
 const BLOCKED_KEYWORDS = [
   "סקס",
@@ -42,7 +77,7 @@ const BLOCKED_KEYWORDS = [
   "אונס",
   "זין",
   "כוס"
-];
+].map(normalizeText);
 
 const BLOCKED_RESPONSE = "המפתחים שלי הגדירו לי שאסור לי לענות על זה";
 
@@ -51,7 +86,12 @@ app.get("/ping", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok", timestamp: new Date() });
+  res.status(200).json({ 
+    status: "ok", 
+    geminiOnCooldown: Date.now() < geminiCooldownUntil,
+    activeSessions: conversationHistory.size,
+    timestamp: new Date() 
+  });
 });
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
@@ -116,7 +156,7 @@ const handleAudioRequest = async (req, res) => {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 8000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          console.log(`✅ ההקלטה הורידה בהצלחה מנתיב: ${cleanPath} (גודל: ${audioBuffer.length} باית)`);
+          console.log(`✅ ההקלטה הורידה בהצלחה מנתיב: ${cleanPath} (גודל: ${audioBuffer.length} באית)`);
           break;
         }
       } catch (err) {
@@ -156,17 +196,17 @@ const handleAudioRequest = async (req, res) => {
       console.log("⚠️ לא הוגדר מפתח DEEPGRAM_API_KEY. ממשיך ללא תמלול מוקדם.");
     }
 
-    const lowerTranscription = transcribedText.toLowerCase();
+    // [שיפור 4]: בדיקה מול טקסט מנורמל
+    const normalizedTranscription = normalizeText(transcribedText);
 
-    // סינון חסימות ברמת הקוד
-    const isBlocked = BLOCKED_KEYWORDS.some(keyword => lowerTranscription.includes(keyword));
+    const isBlocked = BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword));
     if (isBlocked) {
       console.log("🛑 זוהה תוכן לא ראוי בתמלול! מחזיר חסימה מיידית ללא פנייה ל-AI.");
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`id_list_message=t-${BLOCKED_RESPONSE}&go_to_folder=/1`);
     }
 
-    const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
+    const isResetRequested = RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
 
     if (isResetRequested) {
       console.log("🔄 זוהתה בקשת איפוס שיחה!");
@@ -177,17 +217,17 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=t-השיחה אופסה בהצלחה במה אוכל לעזור&go_to_folder=/1`);
     }
 
-    const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
+    const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
 
-    let userSession = conversationHistory.get(userPhone) || { history: [], timer: null };
+    let userSession = conversationHistory.get(userPhone) || { history: [], timer: null, lastActive: Date.now() };
     if (userSession.timer) clearTimeout(userSession.timer);
+    userSession.lastActive = Date.now();
     userSession.timer = setTimeout(() => {
       conversationHistory.delete(userPhone);
     }, 10 * 60 * 1000);
 
     let finalAnswerText = "";
     
-    // הגדרה מעודכנת: תשובות חדשותיות ועובדתיות יהיו ניטרליות. דעות ופוליטיקה יהיו ימניות ובתמיכה בנתניהו
     const basePersonality = "אתה עוזר קולי יעיל. כאשר שואלים אותך מה חדש חדשות או שאלות עובדתיות ענה באופן עובדתי ואינפורמטיבי. אך רק כאשר שואלים אותך מפורשות על דעתך עמדתך או נושאים פוליטיים ומדיניים ענה מנקודת מבט ימנית ציונית גאה המביעה תמיכה מלאה במדינת ישראל בממשלה בראש הממשלה בנימין נתניהו ובצהל. כלל ברזל חשוב: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
     
     const systemInstruction = isDeepRequested
@@ -203,6 +243,7 @@ const handleAudioRequest = async (req, res) => {
       console.log("⚠️ התמלול מ-Deepgram חלש או ריק. הקובץ יועבר ישירות לפיענוח של Gemini.");
     }
     
+    const lowerTranscription = transcribedText.toLowerCase();
     const needsSearch = 
       lowerTranscription.startsWith("חפש") || 
       lowerTranscription.startsWith("חפשי") || 
@@ -218,8 +259,15 @@ const handleAudioRequest = async (req, res) => {
       console.log("🔍 זוהתה בקשת חיפוש באינטרנט - מפעיל Google Search Grounding.");
     }
 
-    // --- שלב 1: מעבר על מפתחות Gemini ---
-    if (geminiKeys.length > 0 && !finalAnswerText) {
+    const isGeminiOnCooldown = Date.now() < geminiCooldownUntil;
+
+    if (isGeminiOnCooldown) {
+      const remainingMinutes = Math.ceil((geminiCooldownUntil - Date.now()) / (1000 * 60));
+      console.log(`⏳ Gemini נמצא כרגע בהפוגה (נותרו עוד ${remainingMinutes} דקות). מדלג ישירות ל-OpenRouter.`);
+    }
+
+    // --- שלב 1: מעבר על מפתחות Gemini (רק אם לא בהפוגה) ---
+    if (!isGeminiOnCooldown && geminiKeys.length > 0 && !finalAnswerText) {
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
       const geminiContents = [
@@ -265,7 +313,17 @@ const handleAudioRequest = async (req, res) => {
               break;
             }
           } catch (err) {
-            console.log(`❌ [Gemini 429/Error] מפתח ${k + 1} מודל ${model} נכשל: ${err.message}`);
+            const statusCode = err.response?.status;
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+
+            // [שיפור 3]: הטיפול בשגיאות שרת והפוגות מותאמות
+            if (statusCode === 429) {
+              geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
+              console.log("⛔ חריגת מכסה 429 זוהתה ב-Gemini! מפעיל הפוגה של 10 דקות.");
+            } else if ([500, 502, 503, 504].includes(statusCode)) {
+              geminiCooldownUntil = Date.now() + 2 * 60 * 1000;
+              console.log("⚠️ שגיאת שרת פנימית ב-Gemini! מפעיל הפוגה קצרה של 2 דקות.");
+            }
           }
         }
       }
