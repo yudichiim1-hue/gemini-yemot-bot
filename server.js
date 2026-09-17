@@ -308,7 +308,7 @@ const handleAudioRequest = async (req, res) => {
       lowerTranscription.includes("היום");
 
     if (needsSearch) {
-      console.log("🔍 זוהתה בקשת חיפוש באינטרנט - מפעיל Google Search Grounding.");
+      console.log("🔍 זוהתה בקשת חיפוש באינטרנט.");
     }
 
     const isGeminiOnCooldown = Date.now() < geminiCooldownUntil;
@@ -347,6 +347,8 @@ const handleAudioRequest = async (req, res) => {
       }
 
       const payload = { contents: geminiContents };
+      
+      // חיפוש באינטרנט בפורמט התקין הייחודי ל-Gemini בלבד
       if (needsSearch) {
         payload.tools = [{ googleSearch: {} }];
       }
@@ -380,7 +382,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- שלב 2: מעבר על מפתחות OpenRouter ---
+    // --- שלב 2: מעבר על מפתחות OpenRouter (ללא שילוב tools של גוגל למניעת שגיאת 404) ---
     if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
       const messagesPayload = [
         { role: "system", content: systemInstruction },
