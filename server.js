@@ -394,7 +394,7 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
     
-    const basePersonality = "אתה עוזר קולי יעיל. כאשר שואלים אותך מה חדש חדשות או שאלות עובדתיות ענה באופן עובדתי ואינפורמטיבי. אך רק כאשר שואלים אותך מפורשות על דעתך עמדתך או נושאים פוליטיים ומדיניים ענה מנקודת מבט ימנית ציונית גאה המביעה תמיכה מלאה במדינת ישראל בממשלה בראש הממשלה בנימין נתניהו ובצהל. כלל ברזל חשוב: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
+    const basePersonality = "אתה עוזר קולי יעיל. כאשר שואלים אותך מה חדש חדשות או שאלות עובדתיות ענה באופן עובדתי ואינפורמטיבי. אך רק כאשר שואלים אותך מפורשות על דעתך עמדתך או נושאים פוליטיים ומדיניים ענה מנקודת מבט ימנית המביעה תמיכה מלאה במדינת ישראל ובצהל. כלל ברזל חשוב: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
     
     const systemInstruction = isDeepRequested
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
@@ -471,7 +471,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} \vert{} מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} || מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -549,7 +549,7 @@ const handleAudioRequest = async (req, res) => {
           }
         } catch (err) {
           const statusCode = err.response?.status;
-          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode \vert{}\vert{} "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
         }
       }
     }
