@@ -1,5 +1,6 @@
 const express = require("express");
-const Database = require("better-sqlite3");
+const fs = require("fs");
+const path = require("path");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 
 const app = express();
@@ -7,29 +8,32 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
-// אתחול בסיס הנתונים באמצעות better-sqlite3
-const db = new Database("./database.db");
+// --- ניהול מסד נתונים מבוסס קובץ JSON פשוט ואמין (מונע את כל שגיאות ה-C++ וה-node-gyp ב-Render) ---
+const DB_FILE = path.join(__dirname, "database.json");
 
-// יצירת טבלת חסומים במידה ואינה קיימת
-db.exec(`
-  CREATE TABLE IF NOT EXISTS banned_phones (
-    phone TEXT PRIMARY KEY,
-    banned_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+let dbData = { bannedPhones: [] };
 
-const processedCalls = new Map();
-const conversationHistory = new Map();
-const bannedPhones = new Set();
-
-// טעינת חסומים מבסיס הנתונים המקומי בטעינה ראשונית
 try {
-  const rows = db.prepare("SELECT phone FROM banned_phones").all();
-  rows.forEach((row) => bannedPhones.add(row.phone));
-  console.log(`🔒 נטענו ${bannedPhones.size} מספרים חסומים מ-SQLite.`);
+  if (fs.existsSync(DB_FILE)) {
+    const fileContent = fs.readFileSync(DB_FILE, "utf-8");
+    dbData = JSON.parse(fileContent);
+  } else {
+    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2));
+  }
 } catch (err) {
-  console.error("❌ שגיאה שטעינת חסומים מ-SQLite:", err.message);
+  console.error("❌ שגיאה בטעינת מסד הנתונים המקומי:", err.message);
 }
+
+const saveDb = () => {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2));
+  } catch (err) {
+    console.error("❌ שגיאה בשמירת מסד הנתונים:", err.message);
+  }
+};
+
+const bannedPhones = new Set(dbData.bannedPhones || []);
+console.log(`🔒 נטענו ${bannedPhones.size} מספרים חסומים ממסד הנתונים המקומי.`);
 
 // טעינת חסומים מבוססת משתני סביבה (אם הוגדרו)
 if (process.env.INITIAL_BANNED_PHONES) {
@@ -39,10 +43,9 @@ if (process.env.INITIAL_BANNED_PHONES) {
       parsedBanned.forEach((phone) => {
         const cleanPhone = String(phone).trim();
         bannedPhones.add(cleanPhone);
-        try {
-          db.prepare("INSERT OR IGNORE INTO banned_phones (phone) VALUES (?)").run(cleanPhone);
-        } catch (e) {}
       });
+      dbData.bannedPhones = Array.from(bannedPhones);
+      saveDb();
       console.log(`🔒 סונכרנו ${bannedPhones.size} מספרים חסומים ממשתני הסביבה.`);
     }
   } catch (err) {
@@ -50,67 +53,26 @@ if (process.env.INITIAL_BANNED_PHONES) {
   }
 }
 
-/**
- * מנגנון שמירת רשימת החסומים בערכי הסביבה של Render באופן קבוע
- */
-const persistBannedPhonesToRender = async () => {
-  const apiKey = process.env.RENDER_API_KEY;
-  const serviceId = process.env.RENDER_SERVICE_ID;
-
-  if (!apiKey || !serviceId) {
-    console.warn("⚠️ RENDER_API_KEY או RENDER_SERVICE_ID אינם מוגדרים. החסימה נשמרה בזיכרון וב-DB בלבד!");
-    return;
-  }
-
-  try {
-    const bannedArray = Array.from(bannedPhones);
-    const jsonValue = JSON.stringify(bannedArray);
-
-    console.log(`🌐 מעדכן את משתני הסביבה ב-Render (${bannedArray.length} חסומים)...`);
-
-    await axios.put(
-      `https://api.render.com/v1/services/${serviceId}/env-vars/INITIAL_BANNED_PHONES`,
-      { value: jsonValue },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
-
-    console.log("✅ רשימת החסומים עודכנה בהצלחה במשתני הסביבה של Render!");
-  } catch (err) {
-    console.error("❌ שגיאה בעדכון משתני הסביבה ב-Render:", err.response?.data || err.message);
-  }
-};
+const processedCalls = new Map();
+const conversationHistory = new Map();
 
 const blockUserPermanently = async (phone) => {
   bannedPhones.add(phone);
-  try {
-    db.prepare("INSERT OR IGNORE INTO banned_phones (phone) VALUES (?)").run(phone);
-  } catch (err) {
-    console.error(`❌ שגיאה בשמירת חסימה ב-SQLite עבור ${phone}:`, err.message);
-  }
+  dbData.bannedPhones = Array.from(bannedPhones);
+  saveDb();
 
   if (conversationHistory.has(phone)) {
     const session = conversationHistory.get(phone);
     if (session.timer) clearTimeout(session.timer);
     conversationHistory.delete(phone);
   }
-  await persistBannedPhonesToRender();
 };
 
 const unblockUser = async (phone) => {
   const existed = bannedPhones.delete(phone);
-  try {
-    db.prepare("DELETE FROM banned_phones WHERE phone = ?").run(phone);
-  } catch (err) {
-    console.error(`❌ שגיאה בהסרת חסימה מ-SQLite עבור ${phone}:`, err.message);
-  }
-
   if (existed) {
-    await persistBannedPhonesToRender();
+    dbData.bannedPhones = Array.from(bannedPhones);
+    saveDb();
   }
   return existed;
 };
@@ -226,7 +188,7 @@ app.get("/admin/add-ban", authenticateAdmin, async (req, res) => {
   await blockUserPermanently(phone);
 
   res.status(200).json({
-    message: `Phone number ${phone} added to banned list and saved permanently`,
+    message: `Phone number ${phone} added to banned list successfully`,
     totalBanned: bannedPhones.size
   });
 });
@@ -389,7 +351,7 @@ const handleAudioRequest = async (req, res) => {
       console.log(`🛑 זוהה תוכן לא ראוי בתמלול! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
 
       if (userSession.blockedAttempts >= 3) {
-        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות ומסנכרן ל-Render.`);
+        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות.`);
         await blockUserPermanently(userPhone);
 
         res.set("Content-Type", "text/plain; charset=utf-8");
@@ -509,7 +471,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} | מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} \vert{} מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -519,7 +481,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode \vert{}\vert{} "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
@@ -587,7 +549,7 @@ const handleAudioRequest = async (req, res) => {
           }
         } catch (err) {
           const statusCode = err.response?.status;
-          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode \vert{}\vert{} "ללא"}): ${err.response?.data?.error?.message || err.message}`);
         }
       }
     }
@@ -603,7 +565,7 @@ const handleAudioRequest = async (req, res) => {
       console.log(`🛑 המודל החזיר תשובת חסימה! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
       
       if (userSession.blockedAttempts >= 3) {
-        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות ומסנכרן ל-Render.`);
+        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות.`);
         await blockUserPermanently(userPhone);
 
         res.set("Content-Type", "text/plain; charset=utf-8");
