@@ -32,7 +32,7 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   const response = await axios.post(geminiUrl, payload, { 
     headers: { "Content-Type": "application/json" }, 
-    timeout: 12000 
+    timeout: 20000 
   });
   return response;
 };
@@ -106,11 +106,11 @@ const handleAudioRequest = async (req, res) => {
 
     let transcribedText = "";
 
-        if (deepgramApiKey) {
+    if (deepgramApiKey) {
       try {
-        console.log("🎙️ שולח את השמע לתמלול ב-Deepgram (Nova-2)...");
+        console.log("🎙️ שולח את השמע לתמלול ב-Deepgram (General Model)...");
         const dgResponse = await axios.post(
-          "https://api.deepgram.com/v1/listen?language=he&model=nova-2",
+          "https://api.deepgram.com/v1/listen?language=he&model=general",
           audioBuffer,
           {
             headers: {
@@ -129,7 +129,6 @@ const handleAudioRequest = async (req, res) => {
     } else {
       console.log("⚠️ לא הוגדר מפתח DEEPGRAM_API_KEY. ממשיך ללא תמלול מוקדם.");
     }
-
 
     const lowerTranscription = transcribedText.toLowerCase();
     const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
