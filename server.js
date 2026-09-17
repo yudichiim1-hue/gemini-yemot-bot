@@ -9,10 +9,13 @@ app.use(express.json({ limit: "50mb" }));
 const processedCalls = new Map();
 const conversationHistory = new Map();
 
+// סט יעודי לשמירת מספרי טלפון חסומים בלבד (חיסכון בזיכרון)
+const bannedPhones = new Set();
+
 // משתנה לניהול הפוגה עבור Gemini
 let geminiCooldownUntil = 0;
 
-// [שיפור 1]: ניקוי זיכרון תקופתי (פעם בשעה) ומניעת זליגת זיכרון
+// ניקוי זיכרון תקופתי (פעם בשעה) להסטוריית שיחות פעילות בלבד
 setInterval(() => {
   const now = Date.now();
   console.log("🧹 מפעיל ניקוי זיכרון תקופתי להסטוריית השיחות...");
@@ -22,14 +25,13 @@ setInterval(() => {
       conversationHistory.delete(phone);
     }
   }
-  // אם עדיין יש יתר על המידה, מגבילים ל-500 שיחות אחרונות
   if (conversationHistory.size > 500) {
     const oldestKeys = Array.from(conversationHistory.keys()).slice(0, conversationHistory.size - 500);
     oldestKeys.forEach((key) => conversationHistory.delete(key));
   }
 }, 60 * 60 * 1000);
 
-// [שיפור 4]: פונקציה לנרמול טקסט (הסרת אותיות סופיות, ניקוד ורווחים)
+// פונקציה לנרמול טקסט (הסרת אותיות סופיות, ניקוד ורווחים)
 const normalizeText = (text) => {
   if (!text) return "";
   return text
@@ -79,7 +81,19 @@ const BLOCKED_KEYWORDS = [
   "כוס"
 ].map(normalizeText);
 
-const BLOCKED_RESPONSE = "המפתחים שלי הגדירו לי שאסור לי לענות על זה";
+// פונקציה ליצירת הודעת אזהרה דינמית ללא סימני פיסוק
+const getWarningMessage = (attempts) => {
+  if (attempts === 1) {
+    return "המפתחים שלי הגדירו שאסור לי לענות על זה זוהי אזהרה ראשונה מתוך שלוש במידה ותגיע לשלוש אזהרות תחסם מהמערכת";
+  }
+  if (attempts === 2) {
+    return "המפתחים שלי הגדירו שאסור לי לענות על זה זוהי אזהרה שנייה מתוך שלוש באזהרה הבאה תחסם מהמערכת";
+  }
+  return "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
+};
+
+const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
+const BLOCKED_RESPONSE_MARKER = "המפתחים שלי הגדירו לי שאסור לי לענות על זה";
 
 app.get("/ping", (req, res) => {
   res.status(200).send("PONG");
@@ -90,6 +104,7 @@ app.get("/health", (req, res) => {
     status: "ok", 
     geminiOnCooldown: Date.now() < geminiCooldownUntil,
     activeSessions: conversationHistory.size,
+    bannedUsersCount: bannedPhones.size,
     timestamp: new Date() 
   });
 });
@@ -124,6 +139,21 @@ const handleAudioRequest = async (req, res) => {
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
     }
+
+    // 1. בדיקה מול רשימת המספרים החסומים לצמיתות
+    if (bannedPhones.has(userPhone)) {
+      console.log(`🚫 המספר ${userPhone} נמצא ברשימת החסומים! חוסם שיחה.`);
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+    }
+
+    // שליפת סשן קיים או יצירת חדש
+    let userSession = conversationHistory.get(userPhone) || { 
+      history: [], 
+      timer: null, 
+      lastActive: Date.now(),
+      blockedAttempts: 0 
+    };
 
     const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
     const deepgramApiKey = (process.env.DEEPGRAM_API_KEY || "").trim();
@@ -196,30 +226,52 @@ const handleAudioRequest = async (req, res) => {
       console.log("⚠️ לא הוגדר מפתח DEEPGRAM_API_KEY. ממשיך ללא תמלול מוקדם.");
     }
 
-    // [שיפור 4]: בדיקה מול טקסט מנורמל
     const normalizedTranscription = normalizeText(transcribedText);
 
+    // בדיקת מילים חסומות + מנגנון אזהרות מדורג
     const isBlocked = BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword));
     if (isBlocked) {
-      console.log("🛑 זוהה תוכן לא ראוי בתמלול! מחזיר חסימה מיידית ללא פנייה ל-AI.");
+      userSession.blockedAttempts += 1;
+      console.log(`🛑 זוהה תוכן לא ראוי בתמלול! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
+
+      if (userSession.blockedAttempts >= 3) {
+        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות ומנקה סשן.`);
+        bannedPhones.add(userPhone);
+        if (userSession.timer) clearTimeout(userSession.timer);
+        conversationHistory.delete(userPhone);
+
+        res.set("Content-Type", "text/plain; charset=utf-8");
+        return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+      }
+
+      userSession.lastActive = Date.now();
+      conversationHistory.set(userPhone, userSession);
+
+      const warningMsg = getWarningMessage(userSession.blockedAttempts);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-${BLOCKED_RESPONSE}&go_to_folder=/1`);
+      return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
     }
 
     const isResetRequested = RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
 
     if (isResetRequested) {
       console.log("🔄 זוהתה בקשת איפוס שיחה!");
-      const existingSession = conversationHistory.get(userPhone);
-      if (existingSession?.timer) clearTimeout(existingSession.timer);
-      conversationHistory.delete(userPhone);
+      if (userSession.timer) clearTimeout(userSession.timer);
+      
+      const currentWarnings = userSession.blockedAttempts;
+      conversationHistory.set(userPhone, {
+        history: [],
+        timer: null,
+        lastActive: Date.now(),
+        blockedAttempts: currentWarnings
+      });
+
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`id_list_message=t-השיחה אופסה בהצלחה במה אוכל לעזור&go_to_folder=/1`);
     }
 
     const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
 
-    let userSession = conversationHistory.get(userPhone) || { history: [], timer: null, lastActive: Date.now() };
     if (userSession.timer) clearTimeout(userSession.timer);
     userSession.lastActive = Date.now();
     userSession.timer = setTimeout(() => {
@@ -266,7 +318,7 @@ const handleAudioRequest = async (req, res) => {
       console.log(`⏳ Gemini נמצא כרגע בהפוגה (נותרו עוד ${remainingMinutes} דקות). מדלג ישירות ל-OpenRouter.`);
     }
 
-    // --- שלב 1: מעבר על מפתחות Gemini (רק אם לא בהפוגה) ---
+    // --- שלב 1: מעבר על מפתחות Gemini ---
     if (!isGeminiOnCooldown && geminiKeys.length > 0 && !finalAnswerText) {
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
@@ -316,7 +368,6 @@ const handleAudioRequest = async (req, res) => {
             const statusCode = err.response?.status;
             console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
 
-            // [שיפור 3]: הטיפול בשגיאות שרת והפוגות מותאמות
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
               console.log("⛔ חריגת מכסה 429 זוהתה ב-Gemini! מפעיל הפוגה של 10 דקות.");
@@ -337,24 +388,45 @@ const handleAudioRequest = async (req, res) => {
         { role: "user", content: transcribedText }
       ];
 
+      const openRouterModels = [
+        "google/gemini-2.0-flash-lite-001:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "deepseek/deepseek-r1:free"
+      ];
+
       for (let i = 0; i < openRouterKeys.length; i++) {
         if (finalAnswerText) break;
         const orKey = openRouterKeys[i];
-        try {
-          console.log(`🌐 מנסה OpenRouter | מפתח ${i + 1}...`);
-          const openRouterCompletion = await axios.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            { model: "openrouter/free", messages: messagesPayload, temperature: 0.3 },
-            { headers: { "Authorization": `Bearer ${orKey}`, "Content-Type": "application/json" }, timeout: 8000 }
-          );
 
-          finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-          if (finalAnswerText) {
-            console.log(`✅ [OpenRouter Success] התקבלה תשובה ממפתח ${i + 1}`);
-            break;
+        for (const orModel of openRouterModels) {
+          if (finalAnswerText) break;
+
+          try {
+            console.log(`🌐 מנסה OpenRouter | מפתח ${i + 1} | מודל ${orModel}...`);
+            const openRouterCompletion = await axios.post(
+              "https://openrouter.ai/api/v1/chat/completions",
+              { 
+                model: orModel, 
+                messages: messagesPayload, 
+                temperature: 0.3 
+              },
+              { 
+                headers: { 
+                  "Authorization": `Bearer ${orKey}`, 
+                  "Content-Type": "application/json" 
+                }, 
+                timeout: 8000 
+              }
+            );
+
+            finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
+            if (finalAnswerText) {
+              console.log(`✅ [OpenRouter Success] התקבלה תשובה מ-OpenRouter (${orModel})`);
+              break;
+            }
+          } catch (err) {
+            console.log(`❌ [OpenRouter Error] מפתח ${i + 1} מודל ${orModel} נכשל: ${err.message}`);
           }
-        } catch (err) {
-          console.log(`❌ [OpenRouter 429/Error] מפתח ${i + 1} נכשל: ${err.message}`);
         }
       }
     }
@@ -364,7 +436,25 @@ const handleAudioRequest = async (req, res) => {
       finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
     }
 
-    // הסרת כל סימני הפיסוק באופן מוחלט
+    // בדיקה האם ה-AI החזיר את תשובת החסימה והמרתה להודעת אזהרה דינמית
+    if (finalAnswerText.includes(BLOCKED_RESPONSE_MARKER)) {
+      userSession.blockedAttempts += 1;
+      console.log(`🛑 המודל החזיר תשובת חסימה! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
+      
+      if (userSession.blockedAttempts >= 3) {
+        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות ומנקה סשן.`);
+        bannedPhones.add(userPhone);
+        if (userSession.timer) clearTimeout(userSession.timer);
+        conversationHistory.delete(userPhone);
+
+        res.set("Content-Type", "text/plain; charset=utf-8");
+        return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+      }
+
+      finalAnswerText = getWarningMessage(userSession.blockedAttempts);
+    }
+
+    // הסרת סימני פיסוק
     const cleanText = finalAnswerText
       .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
       .replace(/\s+/g, " ")                                 
