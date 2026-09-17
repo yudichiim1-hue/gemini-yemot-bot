@@ -1,20 +1,19 @@
 {
-  "name": "voice-agent-server",
+  "name": "gemini-yemot-bot",
   "version": "1.0.0",
-  "description": "Backend service for call handling and transcription",
-  "main": "src/index.js",
-  "type": "commonjs",
+  "description": "Yemot HaMashiach and Gemini Integration Bot",
+  "main": "server.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "build": "npm rebuild"
+    "start": "node server.js",
+    "build": "npm install"
   },
   "engines": {
     "node": ">=20.0.0 <23.0.0"
   },
   "dependencies": {
+    "axios": "^1.7.9",
     "better-sqlite3": "^11.8.0",
     "dotenv": "^16.4.5",
-    "express": "^4.21.0"
+    "express": "^4.21.2"
   }
 }
