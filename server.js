@@ -106,16 +106,16 @@ const handleAudioRequest = async (req, res) => {
 
     let transcribedText = "";
 
-    if (deepgramApiKey) {
+        if (deepgramApiKey) {
       try {
         console.log("🎙️ שולח את השמע לתמלול ב-Deepgram (Nova-2)...");
         const dgResponse = await axios.post(
-          "https://api.deepgram.com/v1/listen?language=he&model=nova-2&smart_format=true",
+          "https://api.deepgram.com/v1/listen?language=he&model=nova-2",
           audioBuffer,
           {
             headers: {
               "Authorization": `Token ${deepgramApiKey}`,
-              "Content-Type": "audio/wav"
+              "Content-Type": "audio/*"
             },
             timeout: 15000
           }
@@ -124,11 +124,12 @@ const handleAudioRequest = async (req, res) => {
         transcribedText = (dgResponse.data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "").trim();
         console.log(`📝 [Deepgram Success]: "${transcribedText}"`);
       } catch (err) {
-        console.error("❌ שגיאה בתמלול Deepgram:", err.message);
+        console.error("❌ שגיאה בתמלול Deepgram:", err.response?.data || err.message);
       }
     } else {
       console.log("⚠️ לא הוגדר מפתח DEEPGRAM_API_KEY. ממשיך ללא תמלול מוקדם.");
     }
+
 
     const lowerTranscription = transcribedText.toLowerCase();
     const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
