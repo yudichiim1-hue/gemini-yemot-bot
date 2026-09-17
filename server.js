@@ -428,7 +428,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} \vert{} מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} | מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -438,7 +438,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode \vert{}\vert{} "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
@@ -508,7 +508,7 @@ const handleAudioRequest = async (req, res) => {
           }
         } catch (err) {
           const statusCode = err.response?.status;
-          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode \vert{}\vert{} "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
         }
       }
     }
