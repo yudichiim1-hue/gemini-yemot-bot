@@ -1,10 +1,41 @@
 const express = require("express");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
+const sqlite3 = require("sqlite3").verbose();
+const path = require("path");
 
 const app = express();
 
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
+
+// --- הגדרת מסד הנתונים SQLite ---
+const dbPath = path.join(__dirname, "calls_log.db");
+const db = new sqlite3.Database(dbPath, (err) => {
+  if (err) console.error("❌ שגיאה בחיבור למסד הנתונים SQLite:", err.message);
+  else console.log("💾 מסד הנתונים SQLite מחובר בהצלחה.");
+});
+
+// יצירת טבלת הלוגים במידה ואינה קיימת
+db.run(`CREATE TABLE IF NOT EXISTS logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+  phone TEXT,
+  did TEXT,
+  question TEXT,
+  answer TEXT
+)`);
+
+// פונקציית עזר לשמירת שיחה בטבלה
+function saveCallToDB(phone, did, question, answer) {
+  const query = `INSERT INTO logs (phone, did, question, answer) VALUES (?, ?, ?, ?)`;
+  db.run(query, [phone || "לא ידוע", did || "לא ידוע", question || "", answer || ""], (err) => {
+    if (err) console.error("❌ שגיאה בשמירת השיחה למסד הנתונים:", err.message);
+    else console.log("✅ השיחה נשמרה בהצלחה במסד הנתונים!");
+  });
+}
+
+// סיסמת גישה לדף הניהול (ניתן להגדיר ב-Render כ-ADMIN_PASSWORD)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "123456";
 
 const processedCalls = new Map();
 const conversationHistory = new Map();
@@ -26,6 +57,94 @@ app.get("/ping", (req, res) => {
 
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date() });
+});
+
+/**
+ * דף ניהול לצפייה בשיחות השמורות במסד הנתונים
+ */
+app.all("/admin", (req, res) => {
+  const pass = req.query.pass || req.body.pass;
+
+  if (pass !== ADMIN_PASSWORD) {
+    return res.status(401).send(`
+      <!DOCTYPE html>
+      <html dir="rtl" lang="he">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>התחברות למערכת הניהול</title>
+        <style>
+          body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; margin: 0; }
+          .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; }
+          input { padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; margin-bottom: 12px; width: 80%; }
+          button { padding: 10px 20px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>גישה מוגנת - ניהול שיחות</h2>
+          <form action="/admin" method="GET">
+            <input type="password" name="pass" placeholder="הכנס סיסמה" required><br>
+            <button type="submit">כניסה</button>
+          </form>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  db.all(`SELECT * FROM logs ORDER BY timestamp DESC LIMIT 500`, [], (err, rows) => {
+    if (err) return res.status(500).send("שגיאה בשליפת הנתונים");
+
+    let tableRows = rows.map(r => `
+      <tr>
+        <td>${new Date(r.timestamp).toLocaleString('he-IL')}</td>
+        <td>${r.phone}</td>
+        <td>${r.did}</td>
+        <td>${r.question}</td>
+        <td>${r.answer}</td>
+      </tr>
+    `).join('');
+
+    res.send(`
+      <!DOCTYPE html>
+      <html dir="rtl" lang="he">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>יומן שיחות - Yemot AI</title>
+        <style>
+          body { font-family: system-ui, sans-serif; margin: 20px; background-color: #f8f9fa; }
+          h1 { color: #333; text-align: center; }
+          .container { max-width: 1200px; margin: 0 auto; }
+          table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-radius: 8px; overflow: hidden; }
+          th, td { border: 1px solid #dee2e6; padding: 12px; text-align: right; word-break: break-word; }
+          th { background-color: #007bff; color: white; }
+          tr:nth-child(even) { background-color: #f8f9fa; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>יומן שיחות מוקלטות (SQLite)</h1>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 150px;">תאריך ושעה</th>
+                <th style="width: 120px;">מספר טלפון</th>
+                <th style="width: 100px;">DID</th>
+                <th>שאלה/תמלול</th>
+                <th>תשובת המערכת</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows.length > 0 ? tableRows : '<tr><td colspan="5" style="text-align:center;">אין שיחות רשומות עדיין</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </body>
+      </html>
+    `);
+  });
 });
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
@@ -130,7 +249,7 @@ const handleAudioRequest = async (req, res) => {
               "Authorization": `Bearer ${groqApiKey}`,
               "Content-Type": `multipart/form-data; boundary=${boundary}`
             },
-            timeout: 20000 // הוגדל ל-20 שניות
+            timeout: 20000
           }
         );
 
@@ -279,6 +398,9 @@ const handleAudioRequest = async (req, res) => {
       .trim();
 
     console.log(`💬 [Final Answer Ready]: "${cleanText}"`);
+
+    // --- שמירה אוטומטית במסד הנתונים SQLite ---
+    saveCallToDB(userPhone, systemDid, transcribedText, cleanText);
 
     if (transcribedText && !transcribedText.startsWith("[שמע")) {
       userSession.history.push({ role: "user", content: transcribedText });
