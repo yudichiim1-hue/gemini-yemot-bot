@@ -460,10 +460,9 @@ const handleAudioRequest = async (req, res) => {
         { role: "user", content: transcribedText }
       ];
 
-      // רשימת עדיפות מודלים - OpenRouter מנתב אוטומטית לפי הסדר בבקשה אחת!
       const preferredModels = [
-        "openrouter/auto",                            // רוטר אוטומטי ראשי
-        "google/gemini-2.0-flash-lite-001:online",   // מודל מחובר לרשת
+        "openrouter/auto",                            
+        "google/gemini-2.0-flash-lite-001:online",   
         "google/gemini-2.0-flash-lite-001",
         "meta-llama/llama-3.3-70b-instruct",
         "qwen/qwen-2.5-72b-instruct"
@@ -482,7 +481,6 @@ const handleAudioRequest = async (req, res) => {
             temperature: 0.3 
           };
 
-          // אם נדרש חיפוש ברשת, מוסיפים תוסף סריקה אוטומטי ב-OpenRouter
           if (needsSearch) {
             payload.plugins = [{ id: "web" }];
           }
