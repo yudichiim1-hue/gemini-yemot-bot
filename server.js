@@ -140,14 +140,12 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`go_to_folder=/1`);
     }
 
-    // 1. בדיקה מול רשימת המספרים החסומים לצמיתות
     if (bannedPhones.has(userPhone)) {
       console.log(`🚫 המספר ${userPhone} נמצא ברשימת החסומים! חוסם שיחה.`);
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
     }
 
-    // שליפת סשן קיים או יצירת חדש
     let userSession = conversationHistory.get(userPhone) || { 
       history: [], 
       timer: null, 
@@ -228,7 +226,6 @@ const handleAudioRequest = async (req, res) => {
 
     const normalizedTranscription = normalizeText(transcribedText);
 
-    // בדיקת מילים חסומות + מנגנון אזהרות מדורג
     const isBlocked = BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword));
     if (isBlocked) {
       userSession.blockedAttempts += 1;
@@ -318,7 +315,7 @@ const handleAudioRequest = async (req, res) => {
       console.log(`⏳ Gemini נמצא כרגע בהפוגה (נותרו עוד ${remainingMinutes} דקות). מדלג ישירות ל-OpenRouter.`);
     }
 
-    // --- שלב 1: מעבר על מפתחות Gemini ---
+    // --- שלב 1: Gemini Direct (כולל חיפוש גוגל מובנה) ---
     if (!isGeminiOnCooldown && geminiKeys.length > 0 && !finalAnswerText) {
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
@@ -381,7 +378,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- שלב 2: מעבר על מפתחות OpenRouter ---
+    // --- שלב 2: OpenRouter (רוטר אוטומטי + Fallback בצד השרת + תוסף אינטרנט) ---
     if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
       const messagesPayload = [
         { role: "system", content: systemInstruction },
@@ -389,49 +386,57 @@ const handleAudioRequest = async (req, res) => {
         { role: "user", content: transcribedText }
       ];
 
-      const openRouterModels = [
-        "google/gemini-2.0-flash-lite-001:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "deepseek/deepseek-r1:free"
+      // רשימת עדיפות מודלים - OpenRouter מנתב אוטומטית לפי הסדר בבקשה אחת!
+      const preferredModels = [
+        "openrouter/auto",                            // רוטר אוטומטי ראשי
+        "google/gemini-2.0-flash-lite-001:online",   // מודל מחובר לרשת
+        "google/gemini-2.0-flash-lite-001",
+        "meta-llama/llama-3.3-70b-instruct",
+        "qwen/qwen-2.5-72b-instruct"
       ];
 
       for (let i = 0; i < openRouterKeys.length; i++) {
         if (finalAnswerText) break;
         const orKey = openRouterKeys[i].trim();
 
-        for (const orModel of openRouterModels) {
-          if (finalAnswerText) break;
+        try {
+          console.log(`🌐 מנסה OpenRouter עם מערך מודלים | מפתח ${i + 1}...`);
+          
+          const payload = { 
+            models: preferredModels, 
+            messages: messagesPayload, 
+            temperature: 0.3 
+          };
 
-          const cleanModel = orModel.trim();
-
-          try {
-            console.log(`🌐 מנסה OpenRouter | מפתח ${i + 1} | מודל ${cleanModel}...`);
-            const openRouterCompletion = await axios.post(
-              "https://openrouter.ai/api/v1/chat/completions",
-              { 
-                model: cleanModel, 
-                messages: messagesPayload, 
-                temperature: 0.3 
-              },
-              { 
-                headers: { 
-                  "Authorization": `Bearer ${orKey}`, 
-                  "Content-Type": "application/json",
-                  "HTTP-Referer": "https://yemot-telephony-ai.com",
-                  "X-Title": "Yemot Telephony AI"
-                }, 
-                timeout: 10000 
-              }
-            );
-
-            finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-            if (finalAnswerText) {
-              console.log(`✅ [OpenRouter Success] התקבלה תשובה מ-OpenRouter (${cleanModel})`);
-              break;
-            }
-          } catch (err) {
-            console.log(`❌ [OpenRouter Error] מפתח ${i + 1} מודל ${cleanModel} נכשל: ${err.response?.status || err.message}`);
+          // אם נדרש חיפוש ברשת, מוסיפים תוסף סריקה אוטומטי ב-OpenRouter
+          if (needsSearch) {
+            payload.plugins = [{ id: "web" }];
           }
+
+          const openRouterCompletion = await axios.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            payload,
+            { 
+              headers: { 
+                "Authorization": `Bearer ${orKey}`, 
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://yemot-telephony-ai.com",
+                "X-Title": "Yemot Telephony AI"
+              }, 
+              timeout: 12000 
+            }
+          );
+
+          finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
+          const usedModel = openRouterCompletion.data?.model || "מנותב אוטומטית";
+
+          if (finalAnswerText) {
+            console.log(`✅ [OpenRouter Success] התקבלה תשובה מ-OpenRouter (מודל שנבחר: ${usedModel})`);
+            break;
+          }
+        } catch (err) {
+          const statusCode = err.response?.status;
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
         }
       }
     }
@@ -441,7 +446,6 @@ const handleAudioRequest = async (req, res) => {
       finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
     }
 
-    // בדיקה האם ה-AI החזיר את תשובת החסימה והמרתה להודעת אזהרה דינמית
     if (finalAnswerText.includes(BLOCKED_RESPONSE_MARKER)) {
       userSession.blockedAttempts += 1;
       console.log(`🛑 המודל החזיר תשובת חסימה! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
@@ -459,7 +463,6 @@ const handleAudioRequest = async (req, res) => {
       finalAnswerText = getWarningMessage(userSession.blockedAttempts);
     }
 
-    // הסרת סימני פיסוק
     const cleanText = finalAnswerText
       .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
       .replace(/\s+/g, " ")                                 
