@@ -348,7 +348,6 @@ const handleAudioRequest = async (req, res) => {
 
       const payload = { contents: geminiContents };
       
-      // חיפוש באינטרנט בפורמט התקין הייחודי ל-Gemini בלבד
       if (needsSearch) {
         payload.tools = [{ googleSearch: {} }];
       }
@@ -382,7 +381,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- שלב 2: מעבר על מפתחות OpenRouter (ללא שילוב tools של גוגל למניעת שגיאת 404) ---
+    // --- שלב 2: מעבר על מפתחות OpenRouter ---
     if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
       const messagesPayload = [
         { role: "system", content: systemInstruction },
@@ -398,36 +397,40 @@ const handleAudioRequest = async (req, res) => {
 
       for (let i = 0; i < openRouterKeys.length; i++) {
         if (finalAnswerText) break;
-        const orKey = openRouterKeys[i];
+        const orKey = openRouterKeys[i].trim();
 
         for (const orModel of openRouterModels) {
           if (finalAnswerText) break;
 
+          const cleanModel = orModel.trim();
+
           try {
-            console.log(`🌐 מנסה OpenRouter | מפתח ${i + 1} | מודל ${orModel}...`);
+            console.log(`🌐 מנסה OpenRouter | מפתח ${i + 1} | מודל ${cleanModel}...`);
             const openRouterCompletion = await axios.post(
               "https://openrouter.ai/api/v1/chat/completions",
               { 
-                model: orModel, 
+                model: cleanModel, 
                 messages: messagesPayload, 
                 temperature: 0.3 
               },
               { 
                 headers: { 
                   "Authorization": `Bearer ${orKey}`, 
-                  "Content-Type": "application/json" 
+                  "Content-Type": "application/json",
+                  "HTTP-Referer": "https://yemot-telephony-ai.com",
+                  "X-Title": "Yemot Telephony AI"
                 }, 
-                timeout: 8000 
+                timeout: 10000 
               }
             );
 
             finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
             if (finalAnswerText) {
-              console.log(`✅ [OpenRouter Success] התקבלה תשובה מ-OpenRouter (${orModel})`);
+              console.log(`✅ [OpenRouter Success] התקבלה תשובה מ-OpenRouter (${cleanModel})`);
               break;
             }
           } catch (err) {
-            console.log(`❌ [OpenRouter Error] מפתח ${i + 1} מודל ${orModel} נכשל: ${err.message}`);
+            console.log(`❌ [OpenRouter Error] מפתח ${i + 1} מודל ${cleanModel} נכשל: ${err.response?.status || err.message}`);
           }
         }
       }
