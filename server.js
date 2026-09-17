@@ -452,7 +452,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- שלב 2: OpenRouter (רוטר אוטומטי + Fallback בצד השרת + תוסף אינטרנט) ---
+    // --- שלב 2: OpenRouter (מקסימום 3 מודלים במערך לפי מגבלות ה-API) ---
     if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
       const messagesPayload = [
         { role: "system", content: systemInstruction },
@@ -460,12 +460,11 @@ const handleAudioRequest = async (req, res) => {
         { role: "user", content: transcribedText }
       ];
 
+      // OpenRouter מגבילה את המערך ל-3 פריטים לכל היותר
       const preferredModels = [
         "openrouter/auto",                            
         "google/gemini-2.0-flash-lite-001:online",   
-        "google/gemini-2.0-flash-lite-001",
-        "meta-llama/llama-3.3-70b-instruct",
-        "qwen/qwen-2.5-72b-instruct"
+        "meta-llama/llama-3.3-70b-instruct"
       ];
 
       for (let i = 0; i < openRouterKeys.length; i++) {
