@@ -1,17 +1,20 @@
 {
-  "name": "yemot-telephony-ai",
+  "name": "voice-agent-server",
   "version": "1.0.0",
-  "description": "Yemot Telephony AI Integration with Groq, OpenRouter and Gemini",
-  "main": "index.js",
+  "description": "Backend service for call handling and transcription",
+  "main": "src/index.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "axios": "^1.7.9",
-    "express": "^4.21.2",
-    "better-sqlite3": "^11.8.0"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "build": "npm rebuild"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0 <23.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0"
   }
 }
