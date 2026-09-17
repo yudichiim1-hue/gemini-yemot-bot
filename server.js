@@ -8,8 +8,6 @@ app.use(express.json({ limit: "50mb" }));
 
 const processedCalls = new Map();
 const conversationHistory = new Map();
-
-// סט יעודי לשמירת מספרי טלפון חסומים בלבד (חיסכון בזיכרון)
 const bannedPhones = new Set();
 
 // טעינת מספרים חסומים מראש ממשתני הסביבה (אם הוגדרו)
@@ -44,11 +42,12 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
-// פונקציה לנרמול טקסט (הסרת אותיות סופיות, ניקוד ורווחים)
+// פונקציה לנרמול טקסט (הסרת אותיות סופיות, ניקוד, פיסוק ורווחים)
 const normalizeText = (text) => {
   if (!text) return "";
   return text
     .replace(/[\u0591-\u05C7]/g, "") // הסרת ניקוד
+    .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") // הסרת פיסוק
     .replace(/ם/g, "מ")
     .replace(/ן/g, "נ")
     .replace(/ץ/g, "צ")
@@ -106,7 +105,7 @@ const getWarningMessage = (attempts) => {
 };
 
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
-const BLOCKED_RESPONSE_MARKER = "המפתחים שלי הגדירו לי שאסור לי לענות על זה";
+const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
 // middleware לאימות מפתח הניהול (ADMIN_KEY)
 const authenticateAdmin = (req, res, next) => {
@@ -140,7 +139,6 @@ app.get("/admin/add-ban", authenticateAdmin, (req, res) => {
 
   bannedPhones.add(phone);
 
-  // ניקוי סשן פעיל אם קיים
   if (conversationHistory.has(phone)) {
     const session = conversationHistory.get(phone);
     if (session.timer) clearTimeout(session.timer);
@@ -209,9 +207,13 @@ const handleAudioRequest = async (req, res) => {
 
     if (callId && processedCalls.has(callId)) {
       console.log(`⚠️ שיחה כפולה זוהתה (CallID: ${callId}), מתעלם ומחזיר לתיקייה.`);
-      processedCalls.delete(callId);
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
+    }
+
+    if (callId) {
+      processedCalls.set(callId, Date.now());
+      setTimeout(() => processedCalls.delete(callId), 10000); // מנקה אוטומטית לאחר 10 שניות
     }
 
     if (bannedPhones.has(userPhone)) {
@@ -227,7 +229,7 @@ const handleAudioRequest = async (req, res) => {
       blockedAttempts: 0 
     };
 
-    const token = params.token || params.TOKEN || "WU1BUElL.apik_H8E4CZtg_8iQ0kMQLYzFrw.X5JSBHi5D-dw_BWfX_3vIrgoR9jYSzUdiITDwdsIHCM";
+    const token = params.token || params.TOKEN || process.env.YM_API_TOKEN;
     const deepgramApiKey = (process.env.DEEPGRAM_API_KEY || "").trim();
     
     const geminiKeys = [
@@ -389,7 +391,7 @@ const handleAudioRequest = async (req, res) => {
       console.log(`⏳ Gemini נמצא כרגע בהפוגה (נותרו עוד ${remainingMinutes} דקות). מדלג ישירות ל-OpenRouter.`);
     }
 
-    // --- שלב 1: Gemini Direct (כולל חיפוש גוגל מובנה) ---
+    // --- שלב 1: Gemini Direct ---
     if (!isGeminiOnCooldown && geminiKeys.length > 0 && !finalAnswerText) {
       const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
@@ -428,7 +430,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} | מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} \vert{} מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -438,7 +440,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode \vert{}\vert{} "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
@@ -452,7 +454,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- שלב 2: OpenRouter (מקסימום 3 מודלים במערך לפי מגבלות ה-API) ---
+    // --- שלב 2: OpenRouter ---
     if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
       const messagesPayload = [
         { role: "system", content: systemInstruction },
@@ -460,7 +462,6 @@ const handleAudioRequest = async (req, res) => {
         { role: "user", content: transcribedText }
       ];
 
-      // OpenRouter מגבילה את המערך ל-3 פריטים לכל היותר
       const preferredModels = [
         "openrouter/auto",                            
         "google/gemini-2.0-flash-lite-001:online",   
@@ -507,7 +508,7 @@ const handleAudioRequest = async (req, res) => {
           }
         } catch (err) {
           const statusCode = err.response?.status;
-          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode \vert{}\vert{} "ללא"}): ${err.response?.data?.error?.message || err.message}`);
         }
       }
     }
@@ -517,7 +518,9 @@ const handleAudioRequest = async (req, res) => {
       finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
     }
 
-    if (finalAnswerText.includes(BLOCKED_RESPONSE_MARKER)) {
+    // בדיקת חסימת תוכן מנורמלת מול תשובת המודל
+    const normalizedAnswer = normalizeText(finalAnswerText);
+    if (normalizedAnswer.includes(BLOCKED_RESPONSE_MARKER)) {
       userSession.blockedAttempts += 1;
       console.log(`🛑 המודל החזיר תשובת חסימה! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
       
@@ -531,12 +534,17 @@ const handleAudioRequest = async (req, res) => {
         return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
       }
 
-      finalAnswerText = getWarningMessage(userSession.blockedAttempts);
+      // במקרה של אזהרה, מחזירים אזהרה ולא שומרים את הודעת החסימה בהיסטוריה
+      const warningMsg = getWarningMessage(userSession.blockedAttempts);
+      conversationHistory.set(userPhone, userSession);
+
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
     }
 
     const cleanText = finalAnswerText
       .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
-      .replace(/\s+/g, " ")                                 
+      .replace(/\s+/g, " ")                                  
       .trim();
 
     console.log(`💬 [Final Answer Ready]: "${cleanText}"`);
@@ -546,11 +554,6 @@ const handleAudioRequest = async (req, res) => {
       userSession.history.push({ role: "assistant", content: cleanText });
       if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
       conversationHistory.set(userPhone, userSession);
-    }
-
-    if (callId) {
-      processedCalls.set(callId, true);
-      setTimeout(() => processedCalls.delete(callId), 5000);
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
