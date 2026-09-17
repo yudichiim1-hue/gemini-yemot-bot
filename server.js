@@ -32,7 +32,7 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   const response = await axios.post(geminiUrl, payload, { 
     headers: { "Content-Type": "application/json" }, 
-    timeout: 20000 
+    timeout: 8000 
   });
   return response;
 };
@@ -108,16 +108,16 @@ const handleAudioRequest = async (req, res) => {
 
     if (deepgramApiKey) {
       try {
-        console.log("🎙️ שולח את השמע לתמלול ב-Deepgram...");
+        console.log("🎙️ שולח את השמע לתמלול ב-Deepgram (Nova-3)...");
         const dgResponse = await axios.post(
-          "https://api.deepgram.com/v1/listen?language=he",
+          "https://api.deepgram.com/v1/listen?language=he&model=nova-3",
           audioBuffer,
           {
             headers: {
               "Authorization": `Token ${deepgramApiKey}`,
-              "Content-Type": "audio/*"
+              "Content-Type": "audio/wav"
             },
-            timeout: 15000
+            timeout: 10000
           }
         );
 
@@ -174,7 +174,7 @@ const handleAudioRequest = async (req, res) => {
 
     // --- שלב 1: מעבר על מפתחות Gemini ---
     if (geminiKeys.length > 0 && !finalAnswerText) {
-      const geminiModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+      const geminiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
