@@ -12,6 +12,19 @@ const conversationHistory = new Map();
 // סט יעודי לשמירת מספרי טלפון חסומים בלבד (חיסכון בזיכרון)
 const bannedPhones = new Set();
 
+// טעינת מספרים חסומים מראש ממשתני הסביבה (אם הוגדרו)
+if (process.env.INITIAL_BANNED_PHONES) {
+  try {
+    const parsedBanned = JSON.parse(process.env.INITIAL_BANNED_PHONES);
+    if (Array.isArray(parsedBanned)) {
+      parsedBanned.forEach((phone) => bannedPhones.add(String(phone).trim()));
+      console.log(`🔒 נטענו ${bannedPhones.size} מספרים חסומים ממשתני הסביבה.`);
+    }
+  } catch (err) {
+    console.error("❌ שגיאה בפענוח INITIAL_BANNED_PHONES ממשתני הסביבה:", err.message);
+  }
+}
+
 // משתנה לניהול הפוגה עבור Gemini
 let geminiCooldownUntil = 0;
 
@@ -94,6 +107,67 @@ const getWarningMessage = (attempts) => {
 
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
 const BLOCKED_RESPONSE_MARKER = "המפתחים שלי הגדירו לי שאסור לי לענות על זה";
+
+// middleware לאימות מפתח הניהול (ADMIN_KEY)
+const authenticateAdmin = (req, res, next) => {
+  const adminKey = process.env.ADMIN_KEY;
+  const providedKey = req.query.key || req.body?.key;
+
+  if (!adminKey) {
+    return res.status(500).json({ error: "ADMIN_KEY isn't defined in server environment variables" });
+  }
+
+  if (!providedKey || providedKey !== adminKey) {
+    return res.status(401).json({ error: "Unauthorized: Invalid or missing admin key" });
+  }
+
+  next();
+};
+
+// נתיבי ניהול חסומים (Admin Endpoints)
+app.get("/admin/banned", authenticateAdmin, (req, res) => {
+  res.status(200).json({
+    totalBanned: bannedPhones.size,
+    bannedPhones: Array.from(bannedPhones)
+  });
+});
+
+app.get("/admin/add-ban", authenticateAdmin, (req, res) => {
+  const phone = (req.query.phone || "").trim();
+  if (!phone) {
+    return res.status(400).json({ error: "Missing 'phone' parameter" });
+  }
+
+  bannedPhones.add(phone);
+
+  // ניקוי סשן פעיל אם קיים
+  if (conversationHistory.has(phone)) {
+    const session = conversationHistory.get(phone);
+    if (session.timer) clearTimeout(session.timer);
+    conversationHistory.delete(phone);
+  }
+
+  res.status(200).json({
+    message: `Phone number ${phone} added to banned list successfully`,
+    totalBanned: bannedPhones.size
+  });
+});
+
+app.get("/admin/remove-ban", authenticateAdmin, (req, res) => {
+  const phone = (req.query.phone || "").trim();
+  if (!phone) {
+    return res.status(400).json({ error: "Missing 'phone' parameter" });
+  }
+
+  const existed = bannedPhones.delete(phone);
+
+  res.status(200).json({
+    message: existed
+      ? `Phone number ${phone} removed from banned list successfully`
+      : `Phone number ${phone} was not in the banned list`,
+    totalBanned: bannedPhones.size
+  });
+});
 
 app.get("/ping", (req, res) => {
   res.status(200).send("PONG");
@@ -354,7 +428,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} | מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} \vert{} מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -364,7 +438,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode \vert{}\vert{} "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
@@ -436,7 +510,7 @@ const handleAudioRequest = async (req, res) => {
           }
         } catch (err) {
           const statusCode = err.response?.status;
-          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode \vert{}\vert{} "ללא"}): ${err.response?.data?.error?.message || err.message}`);
         }
       }
     }
