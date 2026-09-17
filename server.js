@@ -1,4 +1,5 @@
 const express = require("express");
+const Database = require("better-sqlite3");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 
 const app = express();
@@ -6,27 +7,116 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
+// אתחול בסיס הנתונים באמצעות better-sqlite3
+const db = new Database("./database.db");
+
+// יצירת טבלת חסומים במידה ואינה קיימת
+db.exec(`
+  CREATE TABLE IF NOT EXISTS banned_phones (
+    phone TEXT PRIMARY KEY,
+    banned_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
 const processedCalls = new Map();
 const conversationHistory = new Map();
 const bannedPhones = new Set();
 
-// טעינת מספרים חסומים מראש ממשתני הסביבה (אם הוגדרו)
+// טעינת חסומים מבסיס הנתונים המקומי בטעינה ראשונית
+try {
+  const rows = db.prepare("SELECT phone FROM banned_phones").all();
+  rows.forEach((row) => bannedPhones.add(row.phone));
+  console.log(`🔒 נטענו ${bannedPhones.size} מספרים חסומים מ-SQLite.`);
+} catch (err) {
+  console.error("❌ שגיאה שטעינת חסומים מ-SQLite:", err.message);
+}
+
+// טעינת חסומים מבוססת משתני סביבה (אם הוגדרו)
 if (process.env.INITIAL_BANNED_PHONES) {
   try {
     const parsedBanned = JSON.parse(process.env.INITIAL_BANNED_PHONES);
     if (Array.isArray(parsedBanned)) {
-      parsedBanned.forEach((phone) => bannedPhones.add(String(phone).trim()));
-      console.log(`🔒 נטענו ${bannedPhones.size} מספרים חסומים ממשתני הסביבה.`);
+      parsedBanned.forEach((phone) => {
+        const cleanPhone = String(phone).trim();
+        bannedPhones.add(cleanPhone);
+        try {
+          db.prepare("INSERT OR IGNORE INTO banned_phones (phone) VALUES (?)").run(cleanPhone);
+        } catch (e) {}
+      });
+      console.log(`🔒 סונכרנו ${bannedPhones.size} מספרים חסומים ממשתני הסביבה.`);
     }
   } catch (err) {
-    console.error("❌ שגיאה בפענוח INITIAL_BANNED_PHONES ממשתני הסביבה:", err.message);
+    console.error("❌ שגיאה בפענוח INITIAL_BANNED_PHONES:", err.message);
   }
 }
 
-// משתנה לניהול הפוגה עבור Gemini
+/**
+ * מנגנון שמירת רשימת החסומים בערכי הסביבה של Render באופן קבוע
+ */
+const persistBannedPhonesToRender = async () => {
+  const apiKey = process.env.RENDER_API_KEY;
+  const serviceId = process.env.RENDER_SERVICE_ID;
+
+  if (!apiKey || !serviceId) {
+    console.warn("⚠️ RENDER_API_KEY או RENDER_SERVICE_ID אינם מוגדרים. החסימה נשמרה בזיכרון וב-DB בלבד!");
+    return;
+  }
+
+  try {
+    const bannedArray = Array.from(bannedPhones);
+    const jsonValue = JSON.stringify(bannedArray);
+
+    console.log(`🌐 מעדכן את משתני הסביבה ב-Render (${bannedArray.length} חסומים)...`);
+
+    await axios.put(
+      `https://api.render.com/v1/services/${serviceId}/env-vars/INITIAL_BANNED_PHONES`,
+      { value: jsonValue },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    console.log("✅ רשימת החסומים עודכנה בהצלחה במשתני הסביבה של Render!");
+  } catch (err) {
+    console.error("❌ שגיאה בעדכון משתני הסביבה ב-Render:", err.response?.data || err.message);
+  }
+};
+
+const blockUserPermanently = async (phone) => {
+  bannedPhones.add(phone);
+  try {
+    db.prepare("INSERT OR IGNORE INTO banned_phones (phone) VALUES (?)").run(phone);
+  } catch (err) {
+    console.error(`❌ שגיאה בשמירת חסימה ב-SQLite עבור ${phone}:`, err.message);
+  }
+
+  if (conversationHistory.has(phone)) {
+    const session = conversationHistory.get(phone);
+    if (session.timer) clearTimeout(session.timer);
+    conversationHistory.delete(phone);
+  }
+  await persistBannedPhonesToRender();
+};
+
+const unblockUser = async (phone) => {
+  const existed = bannedPhones.delete(phone);
+  try {
+    db.prepare("DELETE FROM banned_phones WHERE phone = ?").run(phone);
+  } catch (err) {
+    console.error(`❌ שגיאה בהסרת חסימה מ-SQLite עבור ${phone}:`, err.message);
+  }
+
+  if (existed) {
+    await persistBannedPhonesToRender();
+  }
+  return existed;
+};
+
 let geminiCooldownUntil = 0;
 
-// ניקוי זיכרון תקופתי (פעם בשעה) להסטוריית שיחות פעילות בלבד
 setInterval(() => {
   const now = Date.now();
   console.log("🧹 מפעיל ניקוי זיכרון תקופתי להסטוריית השיחות...");
@@ -42,12 +132,11 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
-// פונקציה לנרמול טקסט (הסרת אותיות סופיות, ניקוד, פיסוק ורווחים)
 const normalizeText = (text) => {
   if (!text) return "";
   return text
-    .replace(/[\u0591-\u05C7]/g, "") // הסרת ניקוד
-    .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") // הסרת פיסוק
+    .replace(/[\u0591-\u05C7]/g, "")
+    .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ")
     .replace(/ם/g, "מ")
     .replace(/ן/g, "נ")
     .replace(/ץ/g, "צ")
@@ -93,7 +182,6 @@ const BLOCKED_KEYWORDS = [
   "כוס"
 ].map(normalizeText);
 
-// פונקציה ליצירת הודעת אזהרה דינמית ללא סימני פיסוק
 const getWarningMessage = (attempts) => {
   if (attempts === 1) {
     return "המפתחים שלי הגדירו שאסור לי לענות על זה זוהי אזהרה ראשונה מתוך שלוש במידה ותגיע לשלוש אזהרות תחסם מהמערכת";
@@ -107,7 +195,6 @@ const getWarningMessage = (attempts) => {
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
 const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
-// middleware לאימות מפתח הניהול (ADMIN_KEY)
 const authenticateAdmin = (req, res, next) => {
   const adminKey = process.env.ADMIN_KEY;
   const providedKey = req.query.key || req.body?.key;
@@ -123,7 +210,6 @@ const authenticateAdmin = (req, res, next) => {
   next();
 };
 
-// נתיבי ניהול חסומים (Admin Endpoints)
 app.get("/admin/banned", authenticateAdmin, (req, res) => {
   res.status(200).json({
     totalBanned: bannedPhones.size,
@@ -131,33 +217,27 @@ app.get("/admin/banned", authenticateAdmin, (req, res) => {
   });
 });
 
-app.get("/admin/add-ban", authenticateAdmin, (req, res) => {
+app.get("/admin/add-ban", authenticateAdmin, async (req, res) => {
   const phone = (req.query.phone || "").trim();
   if (!phone) {
     return res.status(400).json({ error: "Missing 'phone' parameter" });
   }
 
-  bannedPhones.add(phone);
-
-  if (conversationHistory.has(phone)) {
-    const session = conversationHistory.get(phone);
-    if (session.timer) clearTimeout(session.timer);
-    conversationHistory.delete(phone);
-  }
+  await blockUserPermanently(phone);
 
   res.status(200).json({
-    message: `Phone number ${phone} added to banned list successfully`,
+    message: `Phone number ${phone} added to banned list and saved permanently`,
     totalBanned: bannedPhones.size
   });
 });
 
-app.get("/admin/remove-ban", authenticateAdmin, (req, res) => {
+app.get("/admin/remove-ban", authenticateAdmin, async (req, res) => {
   const phone = (req.query.phone || "").trim();
   if (!phone) {
     return res.status(400).json({ error: "Missing 'phone' parameter" });
   }
 
-  const existed = bannedPhones.delete(phone);
+  const existed = await unblockUser(phone);
 
   res.status(200).json({
     message: existed
@@ -213,7 +293,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (callId) {
       processedCalls.set(callId, Date.now());
-      setTimeout(() => processedCalls.delete(callId), 10000); // מנקה אוטומטית לאחר 10 שניות
+      setTimeout(() => processedCalls.delete(callId), 10000);
     }
 
     if (bannedPhones.has(userPhone)) {
@@ -248,6 +328,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (params.path) possiblePaths.push(params.path);
     if (params.file) possiblePaths.push(params.file);
+    if (params.ApiPath) possiblePaths.push(params.ApiPath);
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
 
@@ -308,10 +389,8 @@ const handleAudioRequest = async (req, res) => {
       console.log(`🛑 זוהה תוכן לא ראוי בתמלול! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
 
       if (userSession.blockedAttempts >= 3) {
-        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות ומנקה סשן.`);
-        bannedPhones.add(userPhone);
-        if (userSession.timer) clearTimeout(userSession.timer);
-        conversationHistory.delete(userPhone);
+        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות ומסנכרן ל-Render.`);
+        await blockUserPermanently(userPhone);
 
         res.set("Content-Type", "text/plain; charset=utf-8");
         return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
@@ -430,7 +509,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} \vert{} מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} | מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -518,23 +597,19 @@ const handleAudioRequest = async (req, res) => {
       finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
     }
 
-    // בדיקת חסימת תוכן מנורמלת מול תשובת המודל
     const normalizedAnswer = normalizeText(finalAnswerText);
     if (normalizedAnswer.includes(BLOCKED_RESPONSE_MARKER)) {
       userSession.blockedAttempts += 1;
       console.log(`🛑 המודל החזיר תשובת חסימה! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
       
       if (userSession.blockedAttempts >= 3) {
-        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות ומנקה סשן.`);
-        bannedPhones.add(userPhone);
-        if (userSession.timer) clearTimeout(userSession.timer);
-        conversationHistory.delete(userPhone);
+        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות ומסנכרן ל-Render.`);
+        await blockUserPermanently(userPhone);
 
         res.set("Content-Type", "text/plain; charset=utf-8");
         return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
       }
 
-      // במקרה של אזהרה, מחזירים אזהרה ולא שומרים את הודעת החסימה בהיסטוריה
       const warningMsg = getWarningMessage(userSession.blockedAttempts);
       conversationHistory.set(userPhone, userSession);
 
