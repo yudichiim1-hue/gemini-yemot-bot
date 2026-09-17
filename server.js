@@ -33,6 +33,21 @@ const DEEP_DETAILS_TRIGGERS = [
   "מידע מפורט"
 ];
 
+// רשימת מילים/מונחים חסומים ברמת הקוד (אפשר להוסיף מילים לפי הצורך)
+const BLOCKED_KEYWORDS = [
+  "סקס",
+  "פורנו",
+  "עירום",
+  "זונה",
+  "שרמוטה",
+  "אונס",
+  "זין",
+  "כוס",
+  "שרמוטה"
+];
+
+const BLOCKED_RESPONSE = "המפתחים שלי הגדירו לי שאסור לי לענות על זה";
+
 app.get("/ping", (req, res) => {
   res.status(200).send("PONG");
 });
@@ -144,6 +159,15 @@ const handleAudioRequest = async (req, res) => {
     }
 
     const lowerTranscription = transcribedText.toLowerCase();
+
+    // --- סינון תוכן חסום ברמת הקוד (ללא פנייה ל-Gemini) ---
+    const isBlocked = BLOCKED_KEYWORDS.some(keyword => lowerTranscription.includes(keyword));
+    if (isBlocked) {
+      console.log("🛑 זוהה תוכן לא ראוי בתמלול! מחזיר חסימה מיידית ללא פנייה ל-AI.");
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(`id_list_message=t-${BLOCKED_RESPONSE}&go_to_folder=/1`);
+    }
+
     const isResetRequested = RESET_TRIGGERS.some(trigger => lowerTranscription.includes(trigger));
 
     if (isResetRequested) {
@@ -165,8 +189,8 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
     
-    // הגדרת זהות ימנית, תומכת בנתניהו ובצה"ל
-    const basePersonality = "אתה עוזר קולי בעל עמדות ימניות לאומיות וציוניות נחרצות. אתה תומך מלא במדינת ישראל בממשלה בראש הממשלה בנימין נתניהו ובצהל. בכל נושא פוליטי בטחוני או מדיני ענה מנקודת מבט ימנית גאה ותמוך בנתניהו. לעולם אל תשתמש בסימני פיסוק. אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
+    // הגדרת אישיות + הנחיה חסימתית גיבוי ל-Gemini
+    const basePersonality = "אתה עוזר קולי בעל עמדות ימניות לאומיות וציוניות נחרצות. אתה תומך מלא במדינת ישראל בממשלה בראש הממשלה בנימין נתניהו ובצהל. בכל נושא פוליטי בטחוני או מדיני ענה מנקודת מבט ימנית גאה ותמוך בנתניהו. כלל ברזל חשוב: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
     
     const systemInstruction = isDeepRequested
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
