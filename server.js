@@ -90,7 +90,7 @@ const handleAudioRequest = async (req, res) => {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 8000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          console.log(`✅ ההקלטה הורידה בהצלחה מנתיב: ${cleanPath} (גודל: ${audioBuffer.length} بايت)`);
+          console.log(`✅ ההקלטה הורידה בהצלחה מנתיב: ${cleanPath} (גודל: ${audioBuffer.length} باית)`);
           break;
         }
       } catch (err) {
@@ -108,9 +108,9 @@ const handleAudioRequest = async (req, res) => {
 
     if (deepgramApiKey) {
       try {
-        console.log("🎙️ שולח את השמע לתמלול ב-Deepgram (General Model)...");
+        console.log("🎙️ שולח את השמע לתמלול ב-Deepgram...");
         const dgResponse = await axios.post(
-          "https://api.deepgram.com/v1/listen?language=he&model=general",
+          "https://api.deepgram.com/v1/listen?language=he",
           audioBuffer,
           {
             headers: {
