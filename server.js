@@ -8,7 +8,7 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
-// --- ניהול מסד נתונים מבוסס קובץ JSON פשוט ואמין (מונע את כל שגיאות ה-C++ וה-node-gyp ב-Render) ---
+// --- ניהול מסד נתונים מבוסס קובץ JSON פשוט ואמין ---
 const DB_FILE = path.join(__dirname, "database.json");
 
 let dbData = { bannedPhones: [] };
@@ -394,7 +394,7 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
     
-    const basePersonality = "אתה עוזר קולי יעיל. כאשר שואלים אותך מה חדש חדשות או שאלות עובדתיות ענה באופן עובדתי ואינפורמטיבי. אך רק כאשר שואלים אותך מפורשות על דעתך עמדתך או נושאים פוליטיים ומדיניים ענה מנקודת מבט ימנית המביעה תמיכה מלאה במדינת ישראל ובצהל. כלל ברזל חשוב: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
+    const basePersonality = "אתה עוזר קולי יעיל. כאשר שואלים אותך מה חדש חדשות או שאלות עובדתיות ענה באופן עובדתי ואינפורמטיבי. אך רק כאשר שואלים אותך מפורשות על דעתך עמדתך או נושאים פוליטיים ומדיניים ענה מנקודת מבט ימנית ציונית גאה המביעה תמיכה מלאה במדינת ישראל בממשלה בראש הממשלה בנימין נתניהו ובצהל. כלל ברזל חשוב: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
     
     const systemInstruction = isDeepRequested
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
@@ -471,7 +471,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} || מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} \vert{} מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -481,7 +481,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode \vert{}\vert{} "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
@@ -495,7 +495,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- שלב 2: OpenRouter ---
+    // --- שלב 2: OpenRouter (openrouter/free לאיזון עומסים אוטומטי מול מודלים חינמיים) ---
     if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
       const messagesPayload = [
         { role: "system", content: systemInstruction },
@@ -503,28 +503,18 @@ const handleAudioRequest = async (req, res) => {
         { role: "user", content: transcribedText }
       ];
 
-      const preferredModels = [
-        "openrouter/auto",                            
-        "google/gemini-2.0-flash-lite-001:online",   
-        "meta-llama/llama-3.3-70b-instruct"
-      ];
-
       for (let i = 0; i < openRouterKeys.length; i++) {
         if (finalAnswerText) break;
         const orKey = openRouterKeys[i].trim();
 
         try {
-          console.log(`🌐 מנסה OpenRouter עם מערך מודלים | מפתח ${i + 1}...`);
+          console.log(`🌐 מנסה OpenRouter (openrouter/free) | מפתח ${i + 1}...`);
           
           const payload = { 
-            models: preferredModels, 
+            model: "openrouter/free", 
             messages: messagesPayload, 
             temperature: 0.3 
           };
-
-          if (needsSearch) {
-            payload.plugins = [{ id: "web" }];
-          }
 
           const openRouterCompletion = await axios.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -541,15 +531,15 @@ const handleAudioRequest = async (req, res) => {
           );
 
           finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-          const usedModel = openRouterCompletion.data?.model || "מנותב אוטומטית";
+          const usedModel = openRouterCompletion.data?.model || "openrouter/free";
 
           if (finalAnswerText) {
-            console.log(`✅ [OpenRouter Success] התקבלה תשובה מ-OpenRouter (מודל שנבחר: ${usedModel})`);
+            console.log(`✅ [OpenRouter Success] התקבלה תשובה (מודל: ${usedModel})`);
             break;
           }
         } catch (err) {
           const statusCode = err.response?.status;
-          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode \vert{}\vert{} "ללא"}): ${err.response?.data?.error?.message || err.message}`);
         }
       }
     }
