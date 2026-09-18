@@ -152,7 +152,6 @@ const BLOCKED_KEYWORDS = [
   "גורן",
   "סטריפטיז",
   "איכסה"
-];
 
 ].map(normalizeText);
 
