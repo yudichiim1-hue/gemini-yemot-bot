@@ -152,7 +152,6 @@ const BLOCKED_KEYWORDS = [
   "גורן",
   "סטריפטיז",
   "איכסה"
-
 ].map(normalizeText);
 
 const getWarningMessage = (attempts) => {
@@ -282,7 +281,8 @@ const handleAudioRequest = async (req, res) => {
       blockedAttempts: 0 
     };
 
-    const token = params.token || params.TOKEN || process.env.YM_API_TOKEN;
+    // קבלת הטוקן אך ורק מנתוני ימות המשיח (Query או Body) בלי שום משתנה סביבה כגיבוי
+    const token = params.token || params.TOKEN;
     const deepgramApiKey = (process.env.DEEPGRAM_API_KEY || "").trim();
     
     const geminiKeys = [
@@ -308,6 +308,13 @@ const handleAudioRequest = async (req, res) => {
     console.log("📁 מנסה להוריד את קובץ השמע מהנתיבים האפשריים...");
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
+      
+      // ודא שקיים טוקן מימות המשיח כדי לבצע את הבקשה
+      if (!token) {
+        console.log("❌ שגיאה: לא התקבל טוקן (token) מימות המשיח בקריאה הנוכחית.");
+        break;
+      }
+
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
 
       try {
@@ -323,9 +330,9 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!audioBuffer) {
-      console.log("❌ שגיאה: לא נמצאה הקלטה תקינה באף אחד מהנתיבים.");
+      console.log("❌ שגיאה: לא נמצאה הקלטה תקינה באף אחד מהנתיבים או שחסר טוקן מימות.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/1`);
+      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה או שחסר טוקן אימות אנא הקלט שוב&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -492,7 +499,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode \vert{}\vert{} "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
@@ -506,7 +513,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- שלב 2: OpenRouter (openrouter/free לאיזון עומסים אוטומטי מול מודלים חינמיים) ---
+    // --- שלב 2: OpenRouter ---
     if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
       const messagesPayload = [
         { role: "system", content: systemInstruction },
@@ -550,7 +557,7 @@ const handleAudioRequest = async (req, res) => {
           }
         } catch (err) {
           const statusCode = err.response?.status;
-          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode \vert{}\vert{} "ללא"}): ${err.response?.data?.error?.message || err.message}`);
         }
       }
     }
