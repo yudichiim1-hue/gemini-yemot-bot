@@ -249,15 +249,13 @@ const handleAudioRequest = async (req, res) => {
     const systemDid = params.ApiRealDID || params.ApiDID || "לא ידוע";
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
-
     const requestedModel = params.MODEL || params.model;
-    let apiType = params.API || params.api;
+    const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
 
     console.log("\n==================================================");
     console.log("📞 [ימות המשיח] התקבלה פנייה חדשה למערכת!");
     console.log(`🏢 מספר מערכת (DID): ${systemDid}`);
     console.log(`📌 מספר טלפון מתקשר: ${userPhone}`);
-    console.log(`⚙️ סוג API: ${apiType || "לא צוין"} \vert{} מודל מוגדר: ${requestedModel || "ברירת מחדל"}`);
     console.log("==================================================\n");
 
     if (callId && processedCalls.has(callId)) {
@@ -284,50 +282,42 @@ const handleAudioRequest = async (req, res) => {
       blockedAttempts: 0 
     };
 
-    const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
-    
-    // --- חילוץ דינמי וחזק של מפתחות מכל שדות ה-api_add האפשריים מימות המשיח ---
-    const allApiAddValues = [];
-    for (const [key, value] of Object.entries(params)) {
-      if (/^api_?add/i.test(key) && value) {
-        // פירוק במידה ומועברים כמה מפתחות יחד עם פסיקים, רווחים או תווים מפרידים
-        const subParts = String(value).split(/[\s,;|]+/).map(p => p.trim()).filter(Boolean);
-        allApiAddValues.push(...subParts);
-      }
-    }
-    // הוספת פרמטר ה-API הראשי במידה והוזן כמפתח ישיר
-    if (apiType && (apiType.startsWith("AIza") || apiType.startsWith("QA.A") || apiType.startsWith("sk-or-") || apiType.length > 15)) {
-      allApiAddValues.push(apiType.trim());
-    }
-
+    // --- חילוץ חכם (Signature-based) של מפתחות API מכל הנתונים ---
+    const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
+    const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
-    const parsedGeminiKeys = [
-      process.env.GEMINI_API_KEY,
-      process.env.GEMINI_API_KEY_1,
-      process.env.GEMINI_API_KEY_2
-    ].filter(Boolean);
 
-    const parsedOpenRouterKeys = [
-      process.env.OPENROUTER_API_KEY,
-      process.env.OPENROUTER_API_KEY_1
-    ].filter(Boolean);
-
-    // ניתוח ומיון מדויק של כל המפתחות שנקלטו מהבקשה
-    allApiAddValues.forEach(val => {
-      if (val.startsWith("AIza") || val.startsWith("QA.A")) {
-        parsedGeminiKeys.push(val);
-      } else if (val.startsWith("sk-or-")) {
-        parsedOpenRouterKeys.push(val);
-      } else if (val.length > 15) {
-        parsedDeepgram = val;
+    const extractKeysDeeply = (obj) => {
+      for (const value of Object.values(obj)) {
+        const items = Array.isArray(value) ? value : [value];
+        for (const item of items) {
+          if (typeof item === "string") {
+            const parts = item.split(/[\s,;|]+/).map(p => p.trim()).filter(Boolean);
+            for (const part of parts) {
+              if (part.startsWith("AIza") || part.startsWith("QA.A")) {
+                parsedGeminiKeys.add(part);
+              } else if (part.startsWith("sk-or-")) {
+                parsedOpenRouterKeys.add(part);
+              } else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) {
+                // מפתח Deepgram הוא בדרך כלל 40 תווים של Hex
+                parsedDeepgram = part;
+              }
+            }
+          } else if (typeof item === "object" && item !== null) {
+            extractKeysDeeply(item);
+          }
+        }
       }
-    });
+    };
 
+    // סריקה רקורסיבית של כל מה שהגיע מימות המשיח
+    extractKeysDeeply(params);
+
+    const geminiKeys = Array.from(parsedGeminiKeys);
+    const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
-    const geminiKeys = [...new Set(parsedGeminiKeys.map(k => k.trim()))].filter(k => k.length > 0);
-    const openRouterKeys = [...new Set(parsedOpenRouterKeys.map(k => k.trim()))].filter(k => k.length > 0);
 
-    console.log(`🔑 מפתחות זמינים בשימוש: Gemini (${geminiKeys.length}), OpenRouter (${openRouterKeys.length}), Deepgram (${deepgramApiKey ? "כן" : "לא"})`);
+    console.log(`🔑 מפתחות שזוהו אוטומטית מהבקשה: Gemini (${geminiKeys.length}), OpenRouter (${openRouterKeys.length}), Deepgram (${deepgramApiKey ? "1" : "0"})`);
 
     let audioBuffer = null;
     const possiblePaths = [];
@@ -452,14 +442,7 @@ const handleAudioRequest = async (req, res) => {
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
       : `${basePersonality} ענה בציטוט קצר ותמציתי עד 35 מילים בלבד.`;
 
-    if (isDeepRequested) {
-      console.log("📖 זוהתה בקשה להעמקה/פירוט - מרחיב את תשובת המודל.");
-    }
-
     const isTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
-    if (isTranscriptionWeak) {
-      console.log("⚠️ התמלול ריק או חלש. הקובץ מועבר ישירות לפיענוח קולי של Gemini.");
-    }
     
     const lowerTranscription = transcribedText.toLowerCase();
     const needsSearch = 
@@ -473,16 +456,7 @@ const handleAudioRequest = async (req, res) => {
       lowerTranscription.includes("עדכונים") ||
       lowerTranscription.includes("היום");
 
-    if (needsSearch) {
-      console.log("🔍 זוהתה בקשת חיפוש באינטרנט.");
-    }
-
     const isGeminiOnCooldown = Date.now() < geminiCooldownUntil;
-
-    if (isGeminiOnCooldown) {
-      const remainingMinutes = Math.ceil((geminiCooldownUntil - Date.now()) / (1000 * 60));
-      console.log(`⏳ Gemini נמצא כרגע בהפוגה (נותרו עוד ${remainingMinutes} דקות). מדלג ישירות ל-OpenRouter.`);
-    }
 
     // --- שלב 1: Gemini Direct ---
     if (!isGeminiOnCooldown && geminiKeys.length > 0 && !finalAnswerText) {
@@ -525,7 +499,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} (${apiKey.substring(0, 6)}...) \vert{} מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} (${apiKey.substring(0, 8)}...) \vert{} מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -535,14 +509,11 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} נכשל (קוד: ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
               console.log("⛔ חריגת מכסה 429 זוהתה ב-Gemini! מפעיל הפוגה של 10 דקות.");
-            } else if ([500, 502, 503, 504].includes(statusCode)) {
-              geminiCooldownUntil = Date.now() + 2 * 60 * 1000;
-              console.log("⚠️ שגיאת שרת פנימית ב-Gemini! מפעיל הפוגה קצרה של 2 דקות.");
             }
           }
         }
@@ -562,7 +533,7 @@ const handleAudioRequest = async (req, res) => {
         const orKey = openRouterKeys[i].trim();
 
         try {
-          console.log(`🌐 מנסה OpenRouter (openrouter/free) | מפתח ${i + 1}...`);
+          console.log(`🌐 מנסה OpenRouter | מפתח ${i + 1}...`);
           
           const payload = { 
             model: "openrouter/free", 
@@ -577,23 +548,19 @@ const handleAudioRequest = async (req, res) => {
               headers: { 
                 "Authorization": `Bearer ${orKey}`, 
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://yemot-telephony-ai.com",
-                "X-Title": "Yemot Telephony AI"
+                "HTTP-Referer": "https://yemot-telephony-ai.com"
               }, 
               timeout: 12000 
             }
           );
 
           finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-          const usedModel = openRouterCompletion.data?.model || "openrouter/free";
-
           if (finalAnswerText) {
-            console.log(`✅ [OpenRouter Success] התקבלה תשובה (מודל: ${usedModel})`);
+            console.log(`✅ [OpenRouter Success] התקבלה תשובה`);
             break;
           }
         } catch (err) {
-          const statusCode = err.response?.status;
-          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל (קוד ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
+          console.log(`❌ [OpenRouter Error] מפתח ${i + 1} נכשל`);
         }
       }
     }
@@ -606,19 +573,15 @@ const handleAudioRequest = async (req, res) => {
     const normalizedAnswer = normalizeText(finalAnswerText);
     if (normalizedAnswer.includes(BLOCKED_RESPONSE_MARKER)) {
       userSession.blockedAttempts += 1;
-      console.log(`🛑 המודל החזיר תשובת חסימה! אזהרה ${userSession.blockedAttempts}/3 למספר ${userPhone}`);
       
       if (userSession.blockedAttempts >= 3) {
-        console.log(`🔒 המספר ${userPhone} הגיע ל-3 אזהרות! חוסם לצמיתות.`);
         await blockUserPermanently(userPhone);
-
         res.set("Content-Type", "text/plain; charset=utf-8");
         return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
       }
 
       const warningMsg = getWarningMessage(userSession.blockedAttempts);
       conversationHistory.set(userPhone, userSession);
-
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
     }
