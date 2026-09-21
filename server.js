@@ -1,6 +1,6 @@
 const express = require("express");
 const fs = require("fs");
-const path = require("path");
+const path = "path" in globalThis ? globalThis.path : require("path");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 
 const app = express();
@@ -253,11 +253,6 @@ const handleAudioRequest = async (req, res) => {
     const requestedModel = params.MODEL || params.model;
     let apiType = params.API || params.api;
 
-    if (apiType && (apiType.startsWith("AIza") || apiType.startsWith("QA.A") || apiType.startsWith("sk-or-") || apiType.length > 15)) {
-      params.api_add_extra_key = apiType;
-      apiType = "gemini";
-    }
-
     console.log("\n==================================================");
     console.log("📞 [ימות המשיח] התקבלה פנייה חדשה למערכת!");
     console.log(`🏢 מספר מערכת (DID): ${systemDid}`);
@@ -291,13 +286,18 @@ const handleAudioRequest = async (req, res) => {
 
     const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
     
-    // --- איסוף דינמי של כל מפתחות ה-API מכל שדות ה-api_add ---
+    // --- חילוץ דינמי וחזק של מפתחות מכל שדות ה-api_add האפשריים מימות המשיח ---
     const allApiAddValues = [];
     for (const [key, value] of Object.entries(params)) {
       if (/^api_?add/i.test(key) && value) {
+        // פירוק במידה ומועברים כמה מפתחות יחד עם פסיקים, רווחים או תווים מפרידים
         const subParts = String(value).split(/[\s,;|]+/).map(p => p.trim()).filter(Boolean);
         allApiAddValues.push(...subParts);
       }
+    }
+    // הוספת פרמטר ה-API הראשי במידה והוזן כמפתח ישיר
+    if (apiType && (apiType.startsWith("AIza") || apiType.startsWith("QA.A") || apiType.startsWith("sk-or-") || apiType.length > 15)) {
+      allApiAddValues.push(apiType.trim());
     }
 
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
@@ -312,6 +312,7 @@ const handleAudioRequest = async (req, res) => {
       process.env.OPENROUTER_API_KEY_1
     ].filter(Boolean);
 
+    // ניתוח ומיון מדויק של כל המפתחות שנקלטו מהבקשה
     allApiAddValues.forEach(val => {
       if (val.startsWith("AIza") || val.startsWith("QA.A")) {
         parsedGeminiKeys.push(val);
@@ -325,6 +326,8 @@ const handleAudioRequest = async (req, res) => {
     const deepgramApiKey = parsedDeepgram.trim();
     const geminiKeys = [...new Set(parsedGeminiKeys.map(k => k.trim()))].filter(k => k.length > 0);
     const openRouterKeys = [...new Set(parsedOpenRouterKeys.map(k => k.trim()))].filter(k => k.length > 0);
+
+    console.log(`🔑 מפתחות זמינים בשימוש: Gemini (${geminiKeys.length}), OpenRouter (${openRouterKeys.length}), Deepgram (${deepgramApiKey ? "כן" : "לא"})`);
 
     let audioBuffer = null;
     const possiblePaths = [];
@@ -386,10 +389,10 @@ const handleAudioRequest = async (req, res) => {
         transcribedText = (dgResponse.data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "").trim();
         console.log(`📝 [Deepgram Success]: "${transcribedText}"`);
       } catch (err) {
-        console.error("❌ שגיאה בתמלול Deepgram:", err.response?.data || err.message);
+        console.error("❌ שגיאה בתמלול Deepgram (עובר ישירות לטיפול Gemini):", err.response?.data || err.message);
       }
     } else {
-      console.log("⚠️ לא הוגדר מפתח DEEPGRAM_API_KEY. ממשיך ללא תמלול מוקדם.");
+      console.log("⚠️ לא הוגדר מפתח DEEPGRAM_API_KEY. מעביר את השמע ישירות ל-Gemini.");
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
@@ -455,7 +458,7 @@ const handleAudioRequest = async (req, res) => {
 
     const isTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     if (isTranscriptionWeak) {
-      console.log("⚠️ התמלול מ-Deepgram חלש או ריק. הקובץ יועבר ישירות לפיענוח של Gemini.");
+      console.log("⚠️ התמלול ריק או חלש. הקובץ מועבר ישירות לפיענוח קולי של Gemini.");
     }
     
     const lowerTranscription = transcribedText.toLowerCase();
@@ -522,7 +525,7 @@ const handleAudioRequest = async (req, res) => {
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} \vert{} מודל ${model}...`);
+            console.log(`🤖 מנסה Gemini | מפתח ${k + 1} (${apiKey.substring(0, 6)}...) \vert{} מודל ${model}...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -532,7 +535,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.response?.data?.error?.message || err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
@@ -547,7 +550,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     // --- שלב 2: OpenRouter ---
-    if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0) {
+    if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText.length > 0 && !transcribedText.startsWith("[שמע")) {
       const messagesPayload = [
         { role: "system", content: systemInstruction },
         ...userSession.history,
