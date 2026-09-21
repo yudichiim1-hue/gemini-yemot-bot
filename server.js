@@ -12,48 +12,89 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 const bannedPhones = new Set();
 
-// טעינת מספרים חסומים מ-Supabase בעליית השרת
+// טעינת מספרים חסומים מ-Supabase בעליית השרת (כולל לוגים מפורטים)
 async function loadBannedPhones() {
   try {
+    console.log("🔍 מנסה לטעון מספרים חסומים מ-Supabase (טבלה: bot_storage, מפתח: banned_phones)...");
     const { data, error } = await supabase
       .from('bot_storage')
       .select('value')
       .eq('key', 'banned_phones')
       .single();
     
+    if (error) {
+      // אם השגיאה היא שלא נמצאה שורה (PGRST116), זה תקין בהרצה ראשונה
+      if (error.code === 'PGRST116') {
+        console.log("ℹ️ מפתח המספרים החסומים טרם קיים בטבלה (זוהי כנראה הרצה ראשונה). ממשיך רגיל.");
+        return;
+      }
+      console.error("❌ שגיאת Supabase בטעינת מספרים חסומים:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+      return;
+    }
+
     if (data && Array.isArray(data.value)) {
       data.value.forEach(phone => bannedPhones.add(String(phone).trim()));
+      console.log(`🔒 נטענו בהצלחה ${bannedPhones.size} מספרים חסומים מ-Supabase.`);
+    } else {
+      console.log("ℹ️ הנתונים שהתקבלו עבור מספרים חסומים אינם מערך תקין:", data);
     }
-    console.log(`🔒 נטענו ${bannedPhones.size} מספרים חסומים מ-Supabase.`);
   } catch (err) {
-    console.error("❌ שגיאה בטעינת מספרים חסומים מ-Supabase:", err.message);
+    console.error("❌ שגיאה חריגה (Exception) בטעינת מספרים חסומים מ-Supabase:", err.message, err.stack);
   }
 }
 
-// שמירת מספרים חסומים ל-Supabase
+// שמירת מספרים חסומים ל-Supabase (כולל לוגים מפורטים)
 async function saveBannedPhones() {
   try {
     const phonesArray = Array.from(bannedPhones);
-    const { error } = await supabase
+    console.log(`💾 מנסה לשמור ${phonesArray.length} מספרים חסומים ל-Supabase...`);
+    
+    const { data, error } = await supabase
       .from('bot_storage')
       .upsert({ key: 'banned_phones', value: phonesArray });
-    if (error) throw error;
+      
+    if (error) {
+      console.error("❌ שגיאת Supabase בשמירת מספרים חסומים:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+      throw error;
+    }
+    console.log("💾 מספרים חסומים נשמרו בהצלחה ב-Supabase.");
   } catch (err) {
-    console.error("❌ שגיאה בשמירת מספרים חסומים ל-Supabase:", err.message);
+    console.error("❌ שגיאה חריגה (Exception) בשמירת מספרים חסומים ל-Supabase:", err.message);
   }
 }
 
-// פונקציית שמירת שיחה לטבלת היסטוריה ב-Supabase
+// פונקציית שמירת שיחה לטבלת היסטוריה ב-Supabase (כולל לוגים מפורטים)
 async function logConversationToSupabase(phone, question, answer, modelName) {
   try {
-    const { error } = await supabase
+    const payload = { phone, question, answer, model: modelName };
+    console.log("📝 שולח נתוני שיחה לטבלת conversation_logs ב-Supabase:", payload);
+
+    const { data, error } = await supabase
       .from('conversation_logs')
-      .insert([{ phone, question, answer, model: modelName }]);
+      .insert([payload]);
+
     if (error) {
-      console.error("❌ שגיאה ברישום השיחה ל-Supabase:", error.message);
+      console.error("❌ שגיאת Supabase ברישום השיחה:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+    } else {
+      console.log("✅ השיחה נרשמה בהצלחה ב-Supabase.");
     }
   } catch (err) {
-    console.error("❌ שגיאה חריגה ברישום השיחה:", err.message);
+    console.error("❌ שגיאה חריגה (Exception) ברישום השיחה ל-Supabase:", err.message);
   }
 }
 
@@ -574,7 +615,7 @@ const handleAudioRequest = async (req, res) => {
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
 
   } catch (error) {
-    console.error("❌ === שגיאה כללית בקוד ===", error.message);
+    console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-חלה שגיאה במערכת אנא נסה שנית&go_to_folder=/1`);
   }
