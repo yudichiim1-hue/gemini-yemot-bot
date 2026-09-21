@@ -251,7 +251,8 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
-    // שליפת פרמטרים מותאמים (api_add)
+    // תמיכה בפרמטר api_add וכל הוריאציות שלו
+    const apiAdd = params.api_add || params.ApiAdd || params.API_ADD || "";
     const requestedModel = params.MODEL || params.model;
     const apiType = params.API || params.api;
 
@@ -259,7 +260,7 @@ const handleAudioRequest = async (req, res) => {
     console.log("📞 [ימות המשיח] התקבלה פנייה חדשה למערכת!");
     console.log(`🏢 מספר מערכת (DID): ${systemDid}`);
     console.log(`📌 מספר טלפון מתקשר: ${userPhone}`);
-    console.log(`⚙️ סוג API: ${apiType} \vert{} מודל מוגדר: ${requestedModel || "ברירת מחדל"}`);
+    console.log(`⚙️ סוג API: ${apiType} | api_add: ${apiAdd} \vert{} מודל מוגדר: ${requestedModel || "ברירת מחדל"}`);
     console.log("==================================================\n");
 
     if (callId && processedCalls.has(callId)) {
@@ -286,7 +287,7 @@ const handleAudioRequest = async (req, res) => {
       blockedAttempts: 0 
     };
 
-    const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || process.env.YM_API_TOKEN;
+    const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
     const deepgramApiKey = (process.env.DEEPGRAM_API_KEY || "").trim();
     
     const geminiKeys = [
@@ -304,7 +305,9 @@ const handleAudioRequest = async (req, res) => {
     const possiblePaths = [];
 
     if (params.path) possiblePaths.push(params.path);
+    if (params.Path) possiblePaths.push(params.Path);
     if (params.file) possiblePaths.push(params.file);
+    if (params.File) possiblePaths.push(params.File);
     if (params.ApiPath) possiblePaths.push(params.ApiPath);
     possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
     possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
@@ -504,7 +507,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode|| "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
