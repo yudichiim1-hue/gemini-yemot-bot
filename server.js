@@ -251,7 +251,6 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
-    const apiAdd = params.api_add || params.ApiAdd || params.API_ADD || "";
     const requestedModel = params.MODEL || params.model;
     const apiType = params.API || params.api;
 
@@ -259,7 +258,7 @@ const handleAudioRequest = async (req, res) => {
     console.log("📞 [ימות המשיח] התקבלה פנייה חדשה למערכת!");
     console.log(`🏢 מספר מערכת (DID): ${systemDid}`);
     console.log(`📌 מספר טלפון מתקשר: ${userPhone}`);
-    console.log(`⚙️ סוג API: ${apiType} | api_add: ${apiAdd} \vert{} מודל מוגדר: ${requestedModel || "ברירת מחדל"}`);
+    console.log(`⚙️ סוג API: ${apiType} \vert{} מודל מוגדר: ${requestedModel || "ברירת מחדל"}`);
     console.log("==================================================\n");
 
     if (callId && processedCalls.has(callId)) {
@@ -288,22 +287,43 @@ const handleAudioRequest = async (req, res) => {
 
     const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
     
-    // שליפת מפתחות: גם מתוך משתני סביבה וגם מתוך מה שמגיע ב-api_add (במידה והועבר שם מפתח)
-    const deepgramApiKey = (process.env.DEEPGRAM_API_KEY || (apiAdd.includes("deepgram") ? apiAdd : "") || "").trim();
-    
-    const geminiKeys = [
-      (process.env.GEMINI_API_KEY || "").trim(),
-      (process.env.GEMINI_API_KEY_1 || "").trim(),
-      (process.env.GEMINI_API_KEY_2 || "").trim(),
-      // אם api_add מכיל מפתח שאינו שייך ל-deepgram או openrouter, נחשיב אותו כג'מיני (או אם הוא מתחיל ב-AIza)
-      (apiAdd.startsWith("AIza") ? apiAdd : "").trim()
-    ].filter(key => key.length > 0);
+    // --- איסוף דינמי של כל הפרמטרים המתחילים ב-api_add (כמו api_add, api_add_1, api_add_2 וכו') ---
+    const allApiAddValues = [];
+    for (const [key, value] of Object.entries(params)) {
+      if (/^api_?add/i.test(key) && value) {
+        // פירוק במידה ויש כמה ערכים בשורה אחת
+        const subParts = String(value).split(/[\s,;|]+/).map(p => p.trim()).filter(Boolean);
+        allApiAddValues.push(...subParts);
+      }
+    }
 
-    const openRouterKeys = [
-      (process.env.OPENROUTER_API_KEY || "").trim(),
-      (process.env.OPENROUTER_API_KEY_1 || "").trim(),
-      (apiAdd.startsWith("sk-or-") ? apiAdd : "").trim()
-    ].filter(key => key.length > 0);
+    let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
+    const parsedGeminiKeys = [
+      process.env.GEMINI_API_KEY,
+      process.env.GEMINI_API_KEY_1,
+      process.env.GEMINI_API_KEY_2
+    ].filter(Boolean);
+
+    const parsedOpenRouterKeys = [
+      process.env.OPENROUTER_API_KEY,
+      process.env.OPENROUTER_API_KEY_1
+    ].filter(Boolean);
+
+    // מיון הערכים שנאספו מכל שורות ה-api_add לפי סוג המפתח
+    allApiAddValues.forEach(val => {
+      if (val.startsWith("AIza")) {
+        parsedGeminiKeys.push(val);
+      } else if (val.startsWith("sk-or-")) {
+        parsedOpenRouterKeys.push(val);
+      } else if (val.length > 15) {
+        // אם זה מחרוזת ארוכה שאינה מתחילה בקידומת מוכרת, נחשיב כ-Deepgram
+        parsedDeepgram = val;
+      }
+    });
+
+    const deepgramApiKey = parsedDeepgram.trim();
+    const geminiKeys = [...new Set(parsedGeminiKeys.map(k => k.trim()))].filter(k => k.length > 0);
+    const openRouterKeys = [...new Set(parsedOpenRouterKeys.map(k => k.trim()))].filter(k => k.length > 0);
 
     let audioBuffer = null;
     const possiblePaths = [];
