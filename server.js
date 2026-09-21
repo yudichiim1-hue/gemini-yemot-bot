@@ -46,7 +46,7 @@ if (process.env.INITIAL_BANNED_PHONES) {
         bannedPhones.add(String(phone).trim());
       });
       dbData.bannedPhones = Array.from(bannedPhones);
-      saveDb(); // Fire and forget in startup
+      saveDb();
       console.log(`🔒 סונכרנו ${bannedPhones.size} מספרים חסומים ממשתני הסביבה.`);
     }
   } catch (err) {
@@ -90,7 +90,6 @@ setInterval(() => {
       conversationHistory.delete(phone);
     }
   }
-  // הגנת הצפת זיכרון
   if (conversationHistory.size > 500) {
     const oldestKeys = Array.from(conversationHistory.keys()).slice(0, conversationHistory.size - 500);
     oldestKeys.forEach((key) => {
@@ -209,7 +208,6 @@ const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
 
-    // --- לוגים מפורטים לבדיקת הנתונים המגיעים מימות ---
     console.log("\n==================================================");
     console.log("📥 [Yemot Incoming Request Debug]");
     console.log("Method:", req.method);
@@ -259,17 +257,27 @@ const handleAudioRequest = async (req, res) => {
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
 
-    // בדיקה מפורשת למפתחות המגיעים ישירות כפרמטרים מימות
-    const explicitGemini = params.GEMINI_API_KEY || params.gemini_key || params.GeminiKey || params.AI_KEY;
-    if (explicitGemini) parsedGeminiKeys.add(String(explicitGemini).trim());
+    // --- קליטה ישירה ומפורשת של מפתחות מימות המשיח (כולל API, KEY, KEY2 וכו') ---
+    const directKeys = [
+      params.GEMINI_API_KEY, params.gemini_key, params.GeminiKey, params.AI_KEY,
+      params.API, params.Api, params.api,
+      params.KEY, params.Key, params.key,
+      params.KEY2, params.Key2, params.key2,
+      params.GEMINI, params.Gemini
+    ].filter(Boolean);
+
+    directKeys.forEach(k => {
+      const val = String(k).trim();
+      if (val) parsedGeminiKeys.add(val);
+    });
 
     const explicitOpenRouter = params.OPENROUTER_API_KEY || params.openrouter_key || params.OpenRouterKey;
     if (explicitOpenRouter) parsedOpenRouterKeys.add(String(explicitOpenRouter).trim());
 
-    const explicitDeepgram = params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey;
+    const explicitDeepgram = params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey || params.DEEPGRAM;
     if (explicitDeepgram) parsedDeepgram = String(explicitDeepgram).trim();
 
-    // סריקה עמוקה למציאת מפתחות בתוך מבנים מקוננים
+    // סריקה עמוקה למציאת מפתחות בתוך מבנים מקוננים (הוספת זיהוי למפתחות המתחילים ב-AQ.)
     const extractKeysDeeply = (obj, depth = 0) => {
       if (depth > 5 || !obj) return; 
       for (const value of Object.values(obj)) {
@@ -278,7 +286,7 @@ const handleAudioRequest = async (req, res) => {
           if (typeof item === "string") {
             const parts = item.split(/[\s,;|]+/).map(p => p.trim()).filter(Boolean);
             for (const part of parts) {
-              if (part.startsWith("AIza") || part.startsWith("QA.A")) {
+              if (part.startsWith("AIza") || part.startsWith("QA.A") || part.startsWith("AQ.")) {
                 parsedGeminiKeys.add(part);
               } else if (part.startsWith("sk-or-")) {
                 parsedOpenRouterKeys.add(part);
@@ -366,7 +374,6 @@ const handleAudioRequest = async (req, res) => {
 
     const normalizedTranscription = normalizeText(transcribedText);
 
-    // בדיקת חסימות (מילים גסות)
     const isBlocked = BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword));
     if (isBlocked) {
       userSession.blockedAttempts += 1;
@@ -386,7 +393,6 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
     }
 
-    // איפוס שיחה
     const isResetRequested = RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
     if (isResetRequested) {
       console.log("🔄 זוהתה בקשת איפוס שיחה!");
@@ -475,7 +481,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מודל ${model} נכשל: ${statusCode || "ללא קוד"}`);
+            console.log(`❌ [Gemini Error] מודל ${model} נכשל: ${statusCode || "ללא קוד"}`, err.response?.data || err.message);
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
               console.log("⛔ חריגת מכסה 429 ב-Gemini! מפעיל הפוגה של 10 דקות.");
@@ -546,7 +552,6 @@ const handleAudioRequest = async (req, res) => {
 
     console.log(`💬 [Final Answer Ready]: "${cleanText}"`);
 
-    // שמירת היסטוריית השיחה (רק אם היה טקסט חוקי ולא "[שמע...")
     if (transcribedText && !transcribedText.startsWith("[שמע")) {
       userSession.history.push({ role: "user", content: transcribedText });
       userSession.history.push({ role: "assistant", content: cleanText });
