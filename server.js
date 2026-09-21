@@ -208,6 +208,15 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
 const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
+
+    // --- לוגים מפורטים לבדיקת הנתונים המגיעים מימות ---
+    console.log("\n==================================================");
+    console.log("📥 [Yemot Incoming Request Debug]");
+    console.log("Method:", req.method);
+    console.log("Query Params:", JSON.stringify(req.query, null, 2));
+    console.log("Body Params:", JSON.stringify(req.body, null, 2));
+    console.log("==================================================\n");
+
     const callId = params.ApiCallId || params.ApiYFCallId;
     const userPhone = params.ApiPhone || params.phone || "default_user";
     const systemDid = params.ApiRealDID || params.ApiDID || "לא ידוע";
@@ -250,7 +259,17 @@ const handleAudioRequest = async (req, res) => {
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
 
-    // נוספה מגבלת עומק כדי למנוע קריסת שרת מ-JSON עמוק במיוחד (Stack Overflow / DoS)
+    // בדיקה מפורשת למפתחות המגיעים ישירות כפרמטרים מימות
+    const explicitGemini = params.GEMINI_API_KEY || params.gemini_key || params.GeminiKey || params.AI_KEY;
+    if (explicitGemini) parsedGeminiKeys.add(String(explicitGemini).trim());
+
+    const explicitOpenRouter = params.OPENROUTER_API_KEY || params.openrouter_key || params.OpenRouterKey;
+    if (explicitOpenRouter) parsedOpenRouterKeys.add(String(explicitOpenRouter).trim());
+
+    const explicitDeepgram = params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey;
+    if (explicitDeepgram) parsedDeepgram = String(explicitDeepgram).trim();
+
+    // סריקה עמוקה למציאת מפתחות בתוך מבנים מקוננים
     const extractKeysDeeply = (obj, depth = 0) => {
       if (depth > 5 || !obj) return; 
       for (const value of Object.values(obj)) {
@@ -522,7 +541,7 @@ const handleAudioRequest = async (req, res) => {
 
     const cleanText = finalAnswerText
       .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
-      .replace(/\s+/g, " ")                                  
+      .replace(/\s+/g, " ")                                     
       .trim();
 
     console.log(`💬 [Final Answer Ready]: "${cleanText}"`);
