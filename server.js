@@ -35,7 +35,6 @@ const saveDb = () => {
 const bannedPhones = new Set(dbData.bannedPhones || []);
 console.log(`🔒 נטענו ${bannedPhones.size} מספרים חסומים ממסד הנתונים המקומי.`);
 
-// טעינת חסומים מבוססת משתני סביבה (אם הוגדרו)
 if (process.env.INITIAL_BANNED_PHONES) {
   try {
     const parsedBanned = JSON.parse(process.env.INITIAL_BANNED_PHONES);
@@ -252,13 +251,18 @@ const handleAudioRequest = async (req, res) => {
     const primaryFolder = params.SHM || "2";
 
     const requestedModel = params.MODEL || params.model;
-    const apiType = params.API || params.api;
+    let apiType = params.API || params.api;
+
+    if (apiType && (apiType.startsWith("AIza") || apiType.startsWith("QA.A") || apiType.startsWith("sk-or-") || apiType.length > 15)) {
+      params.api_add_extra_key = apiType;
+      apiType = "gemini";
+    }
 
     console.log("\n==================================================");
     console.log("📞 [ימות המשיח] התקבלה פנייה חדשה למערכת!");
     console.log(`🏢 מספר מערכת (DID): ${systemDid}`);
     console.log(`📌 מספר טלפון מתקשר: ${userPhone}`);
-    console.log(`⚙️ סוג API: ${apiType} \vert{} מודל מוגדר: ${requestedModel || "ברירת מחדל"}`);
+    console.log(`⚙️ סוג API: ${apiType \vert{}\vert{} "לא צוין"} \vert{} מודל מוגדר: ${requestedModel || "ברירת מחדל"}`);
     console.log("==================================================\n");
 
     if (callId && processedCalls.has(callId)) {
@@ -287,11 +291,10 @@ const handleAudioRequest = async (req, res) => {
 
     const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
     
-    // --- איסוף דינמי של כל הפרמטרים המתחילים ב-api_add (כמו api_add, api_add_1, api_add_2 וכו') ---
+    // --- איסוף דינמי של כל מפתחות ה-API מכל שדות ה-api_add ---
     const allApiAddValues = [];
     for (const [key, value] of Object.entries(params)) {
       if (/^api_?add/i.test(key) && value) {
-        // פירוק במידה ויש כמה ערכים בשורה אחת
         const subParts = String(value).split(/[\s,;|]+/).map(p => p.trim()).filter(Boolean);
         allApiAddValues.push(...subParts);
       }
@@ -309,14 +312,12 @@ const handleAudioRequest = async (req, res) => {
       process.env.OPENROUTER_API_KEY_1
     ].filter(Boolean);
 
-    // מיון הערכים שנאספו מכל שורות ה-api_add לפי סוג המפתח
     allApiAddValues.forEach(val => {
-      if (val.startsWith("AIza")) {
+      if (val.startsWith("AIza") || val.startsWith("QA.A")) {
         parsedGeminiKeys.push(val);
       } else if (val.startsWith("sk-or-")) {
         parsedOpenRouterKeys.push(val);
       } else if (val.length > 15) {
-        // אם זה מחרוזת ארוכה שאינה מתחילה בקידומת מוכרת, נחשיב כ-Deepgram
         parsedDeepgram = val;
       }
     });
@@ -351,7 +352,7 @@ const handleAudioRequest = async (req, res) => {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 8000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          console.log(`✅ ההקלטה הורידה בהצלחה מנתיב: ${cleanPath} (גודל: ${audioBuffer.length} באית)`);
+          console.log(`✅ ההקלטה הורידה בהצלחה מנתיב: ${cleanPath} (גודל: ${audioBuffer.length} באייט)`);
           break;
         }
       } catch (err) {
@@ -531,7 +532,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode \ || "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
