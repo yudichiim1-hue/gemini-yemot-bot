@@ -251,7 +251,6 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
 
-    // תמיכה בפרמטר api_add וכל הוריאציות שלו
     const apiAdd = params.api_add || params.ApiAdd || params.API_ADD || "";
     const requestedModel = params.MODEL || params.model;
     const apiType = params.API || params.api;
@@ -288,17 +287,22 @@ const handleAudioRequest = async (req, res) => {
     };
 
     const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
-    const deepgramApiKey = (process.env.DEEPGRAM_API_KEY || "").trim();
+    
+    // שליפת מפתחות: גם מתוך משתני סביבה וגם מתוך מה שמגיע ב-api_add (במידה והועבר שם מפתח)
+    const deepgramApiKey = (process.env.DEEPGRAM_API_KEY || (apiAdd.includes("deepgram") ? apiAdd : "") || "").trim();
     
     const geminiKeys = [
       (process.env.GEMINI_API_KEY || "").trim(),
       (process.env.GEMINI_API_KEY_1 || "").trim(),
-      (process.env.GEMINI_API_KEY_2 || "").trim()
+      (process.env.GEMINI_API_KEY_2 || "").trim(),
+      // אם api_add מכיל מפתח שאינו שייך ל-deepgram או openrouter, נחשיב אותו כג'מיני (או אם הוא מתחיל ב-AIza)
+      (apiAdd.startsWith("AIza") ? apiAdd : "").trim()
     ].filter(key => key.length > 0);
 
     const openRouterKeys = [
       (process.env.OPENROUTER_API_KEY || "").trim(),
-      (process.env.OPENROUTER_API_KEY_1 || "").trim()
+      (process.env.OPENROUTER_API_KEY_1 || "").trim(),
+      (apiAdd.startsWith("sk-or-") ? apiAdd : "").trim()
     ].filter(key => key.length > 0);
 
     let audioBuffer = null;
@@ -507,7 +511,7 @@ const handleAudioRequest = async (req, res) => {
             }
           } catch (err) {
             const statusCode = err.response?.status;
-            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode|| "ללא"}): ${err.message}`);
+            console.log(`❌ [Gemini Error] מפתח ${k + 1} מודל ${model} נכשל (קוד: ${statusCode || "ללא"}): ${err.message}`);
 
             if (statusCode === 429) {
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
