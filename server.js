@@ -212,7 +212,6 @@ const getWarningMessage = (attempts) => {
 };
 
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
-const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
 const authenticateAdmin = (req, res, next) => {
   const adminKey = process.env.ADMIN_KEY;
@@ -278,27 +277,56 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
   });
 };
 
-// פונקציית פנייה ל-OpenAI TTS ליצירת שמע איכותי
+// פונקציית פנייה ל-OpenAI TTS ליצירת שמע איכותי (כולל לוגים מפורטים מורחבים)
 const generateOpenAiSpeech = async (text, apiKey) => {
-  if (!apiKey) throw new Error("Missing OpenAI API Key");
-  const response = await axios.post(
-    "https://api.openai.com/v1/audio/speech",
-    {
-      model: "tts-1",
-      input: text,
-      voice: "nova",
-      response_format: "mp3"
-    },
-    {
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+  if (!apiKey) {
+    console.error("❌ OpenAI TTS Error: Missing OpenAI API Key");
+    throw new Error("Missing OpenAI API Key");
+  }
+
+  console.log(`🎙️ מתחיל יצירת שמע ב-OpenAI TTS (אורך טקסט: ${text.length} תווים)...`);
+  
+  try {
+    const response = await axios.post(
+      "https://api.openai.com/v1/audio/speech",
+      {
+        model: "tts-1",
+        input: text,
+        voice: "nova",
+        response_format: "mp3"
       },
-      responseType: "arraybuffer",
-      timeout: 10000
+      {
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        responseType: "arraybuffer",
+        timeout: 12000
+      }
+    );
+
+    console.log("✅ OpenAI TTS נוצר בהצלחה!");
+    return Buffer.from(response.data);
+  } catch (error) {
+    if (error.response) {
+      let responseDetails = "";
+      try {
+        responseDetails = Buffer.from(error.response.data).toString("utf-8");
+      } catch (e) {
+        responseDetails = error.response.data;
+      }
+
+      console.error("❌ שגיאת OpenAI TTS מפורטת (HTTP Response):", {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        headers: error.response.headers,
+        data: responseDetails
+      });
+    } else {
+      console.error("❌ שגיאת OpenAI TTS מפורטת (Network/Other):", error.message);
     }
-  );
-  return Buffer.from(response.data);
+    throw error;
+  }
 };
 
 const handleAudioRequest = async (req, res) => {
@@ -394,7 +422,7 @@ const handleAudioRequest = async (req, res) => {
                 parsedGeminiKeys.add(part);
               } else if (part.startsWith("sk-or-")) {
                 parsedOpenRouterKeys.add(part);
-              } else if (part.startsWith("sk-proj-")) {
+              } else if (part.startsWith("sk-proj-") || part.startsWith("sk-")) {
                 parsedOpenAI = part;
               } else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) {
                 parsedDeepgram = part;
@@ -566,7 +594,7 @@ const handleAudioRequest = async (req, res) => {
               break;
             }
           } catch (err) {
-            console.error(`Gemini Error (${model}):`, err?.response?.data || err.message);
+            console.error(`Gemini Error (${model}):`, err?.response?.data?.error?.message || err.message);
           }
         }
       }
@@ -629,8 +657,10 @@ const handleAudioRequest = async (req, res) => {
       try {
         const audioBufferResult = await generateOpenAiSpeech(finalAnswerText, openAiApiKey);
         
-        // העלאת קובץ השמע ל-Supabase Storage והחזרת נתיב השמעה מבוסס URL
+        // העלאת קובץ השמע ל-Supabase Storage
         const fileName = `tts_${userPhone}_${Date.now()}.mp3`;
+        console.log(`📤 מנסה להעלות קובץ שמע ל-Supabase Storage (שם: ${fileName})...`);
+        
         const { data: uploadData, error: uploadError } = await supabase
           .storage
           .from('audio_responses')
@@ -646,15 +676,21 @@ const handleAudioRequest = async (req, res) => {
             .getPublicUrl(fileName);
 
           if (publicUrlData?.publicUrl) {
+            console.log(`✅ קובץ השמע הועלה בהצלחה. URL: ${publicUrlData.publicUrl}`);
             res.set("Content-Type", "text/plain; charset=utf-8");
             return res.send(`id_list_message=f-${publicUrlData.publicUrl}&go_to_folder=/1`);
           }
         } else {
-          console.error("❌ שגיאה בהעלאת קובץ השמע ל-Supabase Storage:", uploadError.message);
+          console.error("❌ שגיאת Supabase Storage בהעלאת שמע:", {
+            message: uploadError.message,
+            name: uploadError.name
+          });
         }
       } catch (ttsErr) {
-        console.error("❌ שגיאה ביצירת שמע ב-OpenAI TTS:", ttsErr.message);
+        console.error("❌ כשל בתהליך OpenAI TTS:", ttsErr.message);
       }
+    } else {
+      console.log("ℹ️ לא סופק מפתח OpenAI API, ממשיך בשיטת ה-Text בלבד.");
     }
 
     // ברירת מחדל: החזרת טקסט לימות המשיח
@@ -662,7 +698,7 @@ const handleAudioRequest = async (req, res) => {
     res.send(`id_list_message=t-${finalAnswerText}&go_to_folder=/1`);
 
   } catch (globalErr) {
-    console.error("❌ שגיאה כללית בטיפול בבקשה:", globalErr.message);
+    console.error("❌ שגיאה כללית בטיפול בבקשה:", globalErr.message, globalErr.stack);
     res.set("Content-Type", "text/plain; charset=utf-8");
     res.send(`id_list_message=t-אירעה שגיאה במערכת אנא נסה שוב&go_to_folder=/1`);
   }
