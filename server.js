@@ -278,6 +278,29 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
   });
 };
 
+// פונקציית פנייה ל-OpenAI TTS ליצירת שמע איכותי
+const generateOpenAiSpeech = async (text, apiKey) => {
+  if (!apiKey) throw new Error("Missing OpenAI API Key");
+  const response = await axios.post(
+    "https://api.openai.com/v1/audio/speech",
+    {
+      model: "tts-1",
+      input: text,
+      voice: "nova",
+      response_format: "mp3"
+    },
+    {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      responseType: "arraybuffer",
+      timeout: 10000
+    }
+  );
+  return Buffer.from(response.data);
+};
+
 const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
@@ -335,6 +358,7 @@ const handleAudioRequest = async (req, res) => {
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
+    let parsedOpenAI = process.env.OPENAI_API_KEY || "";
 
     const directKeys = [
       params.GEMINI_API_KEY, params.gemini_key, params.GeminiKey, params.AI_KEY,
@@ -355,6 +379,9 @@ const handleAudioRequest = async (req, res) => {
     const explicitDeepgram = params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey || params.DEEPGRAM;
     if (explicitDeepgram) parsedDeepgram = String(explicitDeepgram).trim();
 
+    const explicitOpenAI = params.OPENAI_API_KEY || params.openai_key || params.OpenAIKey || params.OPENAI;
+    if (explicitOpenAI) parsedOpenAI = String(explicitOpenAI).trim();
+
     const extractKeysDeeply = (obj, depth = 0) => {
       if (depth > 5 || !obj) return; 
       for (const value of Object.values(obj)) {
@@ -367,6 +394,8 @@ const handleAudioRequest = async (req, res) => {
                 parsedGeminiKeys.add(part);
               } else if (part.startsWith("sk-or-")) {
                 parsedOpenRouterKeys.add(part);
+              } else if (part.startsWith("sk-proj-")) {
+                parsedOpenAI = part;
               } else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) {
                 parsedDeepgram = part;
               }
@@ -383,6 +412,7 @@ const handleAudioRequest = async (req, res) => {
     const geminiKeys = Array.from(parsedGeminiKeys);
     const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
+    const openAiApiKey = parsedOpenAI.trim();
 
     let audioBuffer = null;
     const possiblePaths = [];
@@ -479,7 +509,7 @@ const handleAudioRequest = async (req, res) => {
     const basePersonality = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
     
     const systemInstruction = isDeepRequested
-      ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
+      ? `${basePersonality} המשתמש ביקששתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
       : `${basePersonality} ענה בציטוט קצר ותמציתי עד 35 מילים בלבד.`;
 
     const isTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
@@ -536,62 +566,114 @@ const handleAudioRequest = async (req, res) => {
               break;
             }
           } catch (err) {
-            if (err.response?.status === 429) {
-              console.warn(`⚠️ Gemini API 429 (Rate Limit). מפעיל הדרגתיות להגבלת בקשות...`);
-              geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
-            }
-            console.error(`❌ שגיאה בקריאה ל-Gemini (${model}):`, err.message);
+            console.error(`Gemini Error (${model}):`, err?.response?.data || err.message);
           }
         }
       }
     }
 
-    if (!finalAnswerText) {
-      finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
-      usedModelName = "system-fallback";
-    }
+    // --- שלב 2: OpenRouter (Fallback) ---
+    if (!finalAnswerText && openRouterKeys.length > 0) {
+      for (const openRouterApiKey of openRouterKeys) {
+        try {
+          const openRouterMessages = [
+            { role: "system", content: systemInstruction },
+            ...userSession.history,
+            { role: "user", content: transcribedText || "שלום" }
+          ];
 
-    const normalizedAnswer = normalizeText(finalAnswerText);
-    if (normalizedAnswer.includes(BLOCKED_RESPONSE_MARKER)) {
-      userSession.blockedAttempts += 1;
-      if (userSession.blockedAttempts >= 3) {
-        await blockUserPermanently(userPhone);
-        res.set("Content-Type", "text/plain; charset=utf-8");
-        return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+          const openRouterResponse = await axios.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            {
+              model: "google/gemini-2.5-flash",
+              messages: openRouterMessages
+            },
+            {
+              headers: {
+                "Authorization": `Bearer ${openRouterApiKey}`,
+                "Content-Type": "application/json"
+              },
+              timeout: 12000
+            }
+          );
+
+          if (openRouterResponse?.data?.choices?.[0]?.message?.content) {
+            finalAnswerText = openRouterResponse.data.choices[0].message.content;
+            usedModelName = "openrouter (gemini-2.5-flash)";
+            break;
+          }
+        } catch (err) {
+          console.error("OpenRouter Error:", err?.response?.data || err.message);
+        }
       }
-      conversationHistory.set(userPhone, userSession);
-      const warningMsg = getWarningMessage(userSession.blockedAttempts);
+    }
+
+    if (!finalAnswerText) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
+      return res.send(`id_list_message=t-מצטער לא הצלחתי לעבד את הבקשה כעת אנא נסה שוב מאוחר יותר&go_to_folder=/1`);
     }
 
-    const cleanText = finalAnswerText.replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ").replace(/\s+/g, " ").trim();
+    // עדכון היסטוריה
+    userSession.history.push({ role: "user", content: transcribedText });
+    userSession.history.push({ role: "assistant", content: finalAnswerText });
+    if (userSession.history.length > 10) {
+      userSession.history = userSession.history.slice(-10);
+    }
+    conversationHistory.set(userPhone, userSession);
 
-    logConversationToSupabase(userPhone, transcribedText, cleanText, usedModelName);
+    // שמירה ל-Supabase
+    await logConversationToSupabase(userPhone, transcribedText, finalAnswerText, usedModelName);
 
-    if (transcribedText && !transcribedText.startsWith("[שמע")) {
-      userSession.history.push({ role: "user", content: transcribedText });
-      userSession.history.push({ role: "assistant", content: cleanText });
-      if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
-      conversationHistory.set(userPhone, userSession);
+    // ניסיון יצירת שמע ב-OpenAI TTS במידה וקיים מפתח
+    if (openAiApiKey) {
+      try {
+        const audioBufferResult = await generateOpenAiSpeech(finalAnswerText, openAiApiKey);
+        
+        // העלאת קובץ השמע ל-Supabase Storage והחזרת נתיב השמעה מבוסס URL
+        const fileName = `tts_${userPhone}_${Date.now()}.mp3`;
+        const { data: uploadData, error: uploadError } = await supabase
+          .storage
+          .from('audio_responses')
+          .upload(fileName, audioBufferResult, {
+            contentType: 'audio/mpeg',
+            upsert: true
+          });
+
+        if (!uploadError) {
+          const { data: publicUrlData } = supabase
+            .storage
+            .from('audio_responses')
+            .getPublicUrl(fileName);
+
+          if (publicUrlData?.publicUrl) {
+            res.set("Content-Type", "text/plain; charset=utf-8");
+            return res.send(`id_list_message=f-${publicUrlData.publicUrl}&go_to_folder=/1`);
+          }
+        } else {
+          console.error("❌ שגיאה בהעלאת קובץ השמע ל-Supabase Storage:", uploadError.message);
+        }
+      } catch (ttsErr) {
+        console.error("❌ שגיאה ביצירת שמע ב-OpenAI TTS:", ttsErr.message);
+      }
     }
 
+    // ברירת מחדל: החזרת טקסט לימות המשיח
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
+    res.send(`id_list_message=t-${finalAnswerText}&go_to_folder=/1`);
 
-  } catch (error) {
-    console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
+  } catch (globalErr) {
+    console.error("❌ שגיאה כללית בטיפול בבקשה:", globalErr.message);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-חלה שגיאה במערכת אנא נסה שנית&go_to_folder=/1`);
+    res.send(`id_list_message=t-אירעה שגיאה במערכת אנא נסה שוב&go_to_folder=/1`);
   }
 };
 
 app.all("/", handleAudioRequest);
 app.all("/process-audio", handleAudioRequest);
 
-loadBannedPhones().then(() => {
-  const PORT = process.env.PORT || 10000;
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, async () => {
+  console.log(`🚀 השרת פעיל ומאזין בפורט ${PORT}`);
+  await loadBannedPhones();
 });
