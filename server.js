@@ -1,6 +1,7 @@
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
+const googleTTS = require("google-tts-api"); // התקן באמצעות: npm install google-tts-api
 
 const app = express();
 
@@ -12,7 +13,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 const bannedPhones = new Set();
 
-// טעינת מספרים חסומים מ-Supabase בעליית השרת (כולל לוגים מפורטים)
+// טעינת מספרים חסומים מ-Supabase בעליית השרת
 async function loadBannedPhones() {
   try {
     console.log("🔍 מנסה לטעון מספרים חסומים מ-Supabase (טבלה: bot_storage, מפתח: banned_phones)...");
@@ -43,17 +44,17 @@ async function loadBannedPhones() {
       console.log("ℹ️ הנתונים שהתקבלו עבור מספרים חסומים אינם מערך תקין:", data);
     }
   } catch (err) {
-    console.error("❌ שגיאה חריגה (Exception) בטעינת מספרים חסומים מ-Supabase:", err.message, err.stack);
+    console.error("❌ שגיאה חריגה בטעינת מספרים חסומים מ-Supabase:", err.message, err.stack);
   }
 }
 
-// שמירת מספרים חסומים ל-Supabase (כולל לוגים מפורטים)
+// שמירת מספרים חסומים ל-Supabase
 async function saveBannedPhones() {
   try {
     const phonesArray = Array.from(bannedPhones);
     console.log(`💾 מנסה לשמור ${phonesArray.length} מספרים חסומים ל-Supabase...`);
     
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('bot_storage')
       .upsert({ key: 'banned_phones', value: phonesArray });
       
@@ -68,17 +69,17 @@ async function saveBannedPhones() {
     }
     console.log("💾 מספרים חסומים נשמרו בהצלחה ב-Supabase.");
   } catch (err) {
-    console.error("❌ שגיאה חריגה (Exception) בשמירת מספרים חסומים ל-Supabase:", err.message);
+    console.error("❌ שגיאה חריגה בשמירת מספרים חסומים ל-Supabase:", err.message);
   }
 }
 
-// פונקציית שמירת שיחה לטבלת היסטוריה ב-Supabase (כולל לוגים מפורטים)
+// שמירת שיחה לטבלת היסטוריה ב-Supabase
 async function logConversationToSupabase(phone, question, answer, modelName) {
   try {
     const payload = { phone, question, answer, model: modelName };
     console.log("📝 שולח נתוני שיחה לטבלת conversation_logs ב-Supabase:", payload);
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('conversation_logs')
       .insert([payload]);
 
@@ -93,7 +94,7 @@ async function logConversationToSupabase(phone, question, answer, modelName) {
       console.log("✅ השיחה נרשמה בהצלחה ב-Supabase.");
     }
   } catch (err) {
-    console.error("❌ שגיאה חריגה (Exception) ברישום השיחה ל-Supabase:", err.message);
+    console.error("❌ שגיאה חריגה ברישום השיחה ל-Supabase:", err.message);
   }
 }
 
@@ -115,18 +116,16 @@ if (process.env.INITIAL_BANNED_PHONES) {
 
 const processedCalls = new Map();
 const conversationHistory = new Map();
-const requestLimits = new Map(); // הגנת Rate Limit לפי מספר טלפון
+const requestLimits = new Map();
 
-// פונקציית בדיקת Rate Limit (עד 10 פניות בדקה למספר)
+// בדיקת Rate Limit (עד 10 פניות בדקה למספר)
 const checkRateLimit = (phone) => {
   if (!phone || phone === "default_user") return true;
   const now = Date.now();
   const userLog = requestLimits.get(phone) || [];
   const recentRequests = userLog.filter(timestamp => now - timestamp < 60000);
   
-  if (recentRequests.length >= 10) {
-    return false;
-  }
+  if (recentRequests.length >= 10) return false;
   
   recentRequests.push(now);
   requestLimits.set(phone, recentRequests);
@@ -146,9 +145,7 @@ const blockUserPermanently = async (phone) => {
 
 const unblockUser = async (phone) => {
   const existed = bannedPhones.delete(phone);
-  if (existed) {
-    await saveBannedPhones();
-  }
+  if (existed) await saveBannedPhones();
   return existed;
 };
 
@@ -212,25 +209,19 @@ const getWarningMessage = (attempts) => {
 };
 
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
+const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
 const authenticateAdmin = (req, res, next) => {
   const adminKey = process.env.ADMIN_KEY;
   const providedKey = req.query.key || req.body?.key;
 
-  if (!adminKey) {
-    return res.status(500).json({ error: "ADMIN_KEY isn't defined in server environment variables" });
-  }
-  if (!providedKey || providedKey !== adminKey) {
-    return res.status(401).json({ error: "Unauthorized: Invalid or missing admin key" });
-  }
+  if (!adminKey) return res.status(500).json({ error: "ADMIN_KEY isn't defined in server environment variables" });
+  if (!providedKey || providedKey !== adminKey) return res.status(401).json({ error: "Unauthorized: Invalid or missing admin key" });
   next();
 };
 
 app.get("/admin/banned", authenticateAdmin, (req, res) => {
-  res.status(200).json({
-    totalBanned: bannedPhones.size,
-    bannedPhones: Array.from(bannedPhones)
-  });
+  res.status(200).json({ totalBanned: bannedPhones.size, bannedPhones: Array.from(bannedPhones) });
 });
 
 app.get("/admin/add-ban", authenticateAdmin, async (req, res) => {
@@ -238,10 +229,7 @@ app.get("/admin/add-ban", authenticateAdmin, async (req, res) => {
   if (!phone) return res.status(400).json({ error: "Missing 'phone' parameter" });
 
   await blockUserPermanently(phone);
-  res.status(200).json({
-    message: `Phone number ${phone} added to banned list successfully`,
-    totalBanned: bannedPhones.size
-  });
+  res.status(200).json({ message: `Phone number ${phone} added to banned list successfully`, totalBanned: bannedPhones.size });
 });
 
 app.get("/admin/remove-ban", authenticateAdmin, async (req, res) => {
@@ -249,12 +237,7 @@ app.get("/admin/remove-ban", authenticateAdmin, async (req, res) => {
   if (!phone) return res.status(400).json({ error: "Missing 'phone' parameter" });
 
   const existed = await unblockUser(phone);
-  res.status(200).json({
-    message: existed
-      ? `Phone number ${phone} removed from banned list successfully`
-      : `Phone number ${phone} was not in the banned list`,
-    totalBanned: bannedPhones.size
-  });
+  res.status(200).json({ message: existed ? `Phone number ${phone} removed from banned list successfully` : `Phone number ${phone} was not in the banned list`, totalBanned: bannedPhones.size });
 });
 
 app.get("/ping", (req, res) => res.status(200).send("PONG"));
@@ -269,64 +252,44 @@ app.get("/health", (req, res) => {
   });
 });
 
+/**
+ * יצירת קישור/קישורי שמע מ-Google Translate TTS
+ */
+function buildGoogleTtsMessage(text) {
+  try {
+    if (text.length <= 200) {
+      const url = googleTTS.getAudioUrl(text, {
+        lang: 'he',
+        slow: false,
+        host: 'https://translate.google.com',
+        timeout: 10000,
+      });
+      return `id_list_message=${url}&go_to_folder=/1`;
+    }
+
+    // במידה והטקסט ארוך מ-200 תווים, מחלקים אותו ומחזירים שרשור קישורים
+    const results = googleTTS.getAllAudioUrls(text, {
+      lang: 'he',
+      slow: false,
+      host: 'https://translate.google.com',
+      splitPunct: ' '
+    });
+
+    const urlList = results.map(res => res.url).join("&");
+    return `id_list_message=${urlList}&go_to_folder=/1`;
+  } catch (err) {
+    console.error("❌ שגיאה ביצירת Google Translate TTS:", err.message);
+    // Fallback להקראה מובנית של ימות המשיח
+    return `id_list_message=t-${text}&go_to_folder=/1`;
+  }
+}
+
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   return axios.post(geminiUrl, payload, { 
     headers: { "Content-Type": "application/json" }, 
-    timeout: 12000 
+    timeout: 20000 // 20 שניות למניעת Timeout
   });
-};
-
-// פונקציית פנייה ל-OpenAI TTS ליצירת שמע איכותי (כולל לוגים מפורטים מורחבים)
-const generateOpenAiSpeech = async (text, apiKey) => {
-  if (!apiKey) {
-    console.error("❌ OpenAI TTS Error: Missing OpenAI API Key");
-    throw new Error("Missing OpenAI API Key");
-  }
-
-  console.log(`🎙️ מתחיל יצירת שמע ב-OpenAI TTS (אורך טקסט: ${text.length} תווים)...`);
-  
-  try {
-    const response = await axios.post(
-      "https://api.openai.com/v1/audio/speech",
-      {
-        model: "tts-1",
-        input: text,
-        voice: "nova",
-        response_format: "mp3"
-      },
-      {
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        },
-        responseType: "arraybuffer",
-        timeout: 12000
-      }
-    );
-
-    console.log("✅ OpenAI TTS נוצר בהצלחה!");
-    return Buffer.from(response.data);
-  } catch (error) {
-    if (error.response) {
-      let responseDetails = "";
-      try {
-        responseDetails = Buffer.from(error.response.data).toString("utf-8");
-      } catch (e) {
-        responseDetails = error.response.data;
-      }
-
-      console.error("❌ שגיאת OpenAI TTS מפורטת (HTTP Response):", {
-        status: error.response.status,
-        statusText: error.response.statusText,
-        headers: error.response.headers,
-        data: responseDetails
-      });
-    } else {
-      console.error("❌ שגיאת OpenAI TTS מפורטת (Network/Other):", error.message);
-    }
-    throw error;
-  }
 };
 
 const handleAudioRequest = async (req, res) => {
@@ -344,13 +307,13 @@ const handleAudioRequest = async (req, res) => {
     if (!token) {
       console.log("❌ שגיאה: לא נמצא טוקן (Token) לאימות מול ימות המשיח.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-שגיאת אימות טוקן חסר&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("שגיאת אימות טוקן חסר"));
     }
 
     if (!checkRateLimit(userPhone)) {
       console.warn(`Rate limit exceeded for phone: ${userPhone}`);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-חרגת ממספר הפניות המותר בדקה. נסה שוב מאוחר יותר.&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר"));
     }
 
     const callId = params.ApiCallId || params.ApiYFCallId;
@@ -373,7 +336,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (bannedPhones.has(userPhone)) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
     }
 
     let userSession = conversationHistory.get(userPhone) || { 
@@ -386,7 +349,6 @@ const handleAudioRequest = async (req, res) => {
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
-    let parsedOpenAI = process.env.OPENAI_API_KEY || "";
 
     const directKeys = [
       params.GEMINI_API_KEY, params.gemini_key, params.GeminiKey, params.AI_KEY,
@@ -407,9 +369,6 @@ const handleAudioRequest = async (req, res) => {
     const explicitDeepgram = params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey || params.DEEPGRAM;
     if (explicitDeepgram) parsedDeepgram = String(explicitDeepgram).trim();
 
-    const explicitOpenAI = params.OPENAI_API_KEY || params.openai_key || params.OpenAIKey || params.OPENAI;
-    if (explicitOpenAI) parsedOpenAI = String(explicitOpenAI).trim();
-
     const extractKeysDeeply = (obj, depth = 0) => {
       if (depth > 5 || !obj) return; 
       for (const value of Object.values(obj)) {
@@ -422,8 +381,6 @@ const handleAudioRequest = async (req, res) => {
                 parsedGeminiKeys.add(part);
               } else if (part.startsWith("sk-or-")) {
                 parsedOpenRouterKeys.add(part);
-              } else if (part.startsWith("sk-proj-") || part.startsWith("sk-")) {
-                parsedOpenAI = part;
               } else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) {
                 parsedDeepgram = part;
               }
@@ -440,7 +397,6 @@ const handleAudioRequest = async (req, res) => {
     const geminiKeys = Array.from(parsedGeminiKeys);
     const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
-    const openAiApiKey = parsedOpenAI.trim();
 
     let audioBuffer = null;
     const possiblePaths = [];
@@ -468,7 +424,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (!audioBuffer) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("לא נמצאה הקלטה תקינה אנא הקלט שוב"));
     }
 
     let transcribedText = "";
@@ -498,14 +454,14 @@ const handleAudioRequest = async (req, res) => {
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
         res.set("Content-Type", "text/plain; charset=utf-8");
-        return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+        return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
       }
 
       userSession.lastActive = Date.now();
       conversationHistory.set(userPhone, userSession);
       const warningMsg = getWarningMessage(userSession.blockedAttempts);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage(warningMsg));
     }
 
     const isResetRequested = RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -520,7 +476,7 @@ const handleAudioRequest = async (req, res) => {
       });
 
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-השיחה אופסה בהצלחה במה אוכל לעזור&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("השיחה אופסה בהצלחה במה אוכל לעזור"));
     }
 
     const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -537,7 +493,7 @@ const handleAudioRequest = async (req, res) => {
     const basePersonality = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
     
     const systemInstruction = isDeepRequested
-      ? `${basePersonality} המשתמש ביקששתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
+      ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
       : `${basePersonality} ענה בציטוט קצר ותמציתי עד 35 מילים בלבד.`;
 
     const isTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
@@ -594,122 +550,62 @@ const handleAudioRequest = async (req, res) => {
               break;
             }
           } catch (err) {
-            console.error(`Gemini Error (${model}):`, err?.response?.data?.error?.message || err.message);
-          }
-        }
-      }
-    }
-
-    // --- שלב 2: OpenRouter (Fallback) ---
-    if (!finalAnswerText && openRouterKeys.length > 0) {
-      for (const openRouterApiKey of openRouterKeys) {
-        try {
-          const openRouterMessages = [
-            { role: "system", content: systemInstruction },
-            ...userSession.history,
-            { role: "user", content: transcribedText || "שלום" }
-          ];
-
-          const openRouterResponse = await axios.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            {
-              model: "google/gemini-2.5-flash",
-              messages: openRouterMessages
-            },
-            {
-              headers: {
-                "Authorization": `Bearer ${openRouterApiKey}`,
-                "Content-Type": "application/json"
-              },
-              timeout: 12000
+            if (err.response?.status === 429) {
+              console.warn(`⚠️ Gemini API 429 (Rate Limit). מפעיל הדרגתיות להגבלת בקשות...`);
+              geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
             }
-          );
-
-          if (openRouterResponse?.data?.choices?.[0]?.message?.content) {
-            finalAnswerText = openRouterResponse.data.choices[0].message.content;
-            usedModelName = "openrouter (gemini-2.5-flash)";
-            break;
+            console.error(`❌ שגיאה בקריאה ל-Gemini (${model}):`, err.message);
           }
-        } catch (err) {
-          console.error("OpenRouter Error:", err?.response?.data || err.message);
         }
       }
     }
 
     if (!finalAnswerText) {
-      res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-מצטער לא הצלחתי לעבד את הבקשה כעת אנא נסה שוב מאוחר יותר&go_to_folder=/1`);
+      finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
+      usedModelName = "system-fallback";
     }
 
-    // עדכון היסטוריה
-    userSession.history.push({ role: "user", content: transcribedText });
-    userSession.history.push({ role: "assistant", content: finalAnswerText });
-    if (userSession.history.length > 10) {
-      userSession.history = userSession.history.slice(-10);
-    }
-    conversationHistory.set(userPhone, userSession);
-
-    // שמירה ל-Supabase
-    await logConversationToSupabase(userPhone, transcribedText, finalAnswerText, usedModelName);
-
-    // ניסיון יצירת שמע ב-OpenAI TTS במידה וקיים מפתח
-    if (openAiApiKey) {
-      try {
-        const audioBufferResult = await generateOpenAiSpeech(finalAnswerText, openAiApiKey);
-        
-        // העלאת קובץ השמע ל-Supabase Storage
-        const fileName = `tts_${userPhone}_${Date.now()}.mp3`;
-        console.log(`📤 מנסה להעלות קובץ שמע ל-Supabase Storage (שם: ${fileName})...`);
-        
-        const { data: uploadData, error: uploadError } = await supabase
-          .storage
-          .from('audio_responses')
-          .upload(fileName, audioBufferResult, {
-            contentType: 'audio/mpeg',
-            upsert: true
-          });
-
-        if (!uploadError) {
-          const { data: publicUrlData } = supabase
-            .storage
-            .from('audio_responses')
-            .getPublicUrl(fileName);
-
-          if (publicUrlData?.publicUrl) {
-            console.log(`✅ קובץ השמע הועלה בהצלחה. URL: ${publicUrlData.publicUrl}`);
-            res.set("Content-Type", "text/plain; charset=utf-8");
-            return res.send(`id_list_message=f-${publicUrlData.publicUrl}&go_to_folder=/1`);
-          }
-        } else {
-          console.error("❌ שגיאת Supabase Storage בהעלאת שמע:", {
-            message: uploadError.message,
-            name: uploadError.name
-          });
-        }
-      } catch (ttsErr) {
-        console.error("❌ כשל בתהליך OpenAI TTS:", ttsErr.message);
+    const normalizedAnswer = normalizeText(finalAnswerText);
+    if (normalizedAnswer.includes(BLOCKED_RESPONSE_MARKER)) {
+      userSession.blockedAttempts += 1;
+      if (userSession.blockedAttempts >= 3) {
+        await blockUserPermanently(userPhone);
+        res.set("Content-Type", "text/plain; charset=utf-8");
+        return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
       }
-    } else {
-      console.log("ℹ️ לא סופק מפתח OpenAI API, ממשיך בשיטת ה-Text בלבד.");
+      conversationHistory.set(userPhone, userSession);
+      const warningMsg = getWarningMessage(userSession.blockedAttempts);
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(buildGoogleTtsMessage(warningMsg));
     }
 
-    // ברירת מחדל: החזרת טקסט לימות המשיח
-    res.set("Content-Type", "text/plain; charset=utf-8");
-    res.send(`id_list_message=t-${finalAnswerText}&go_to_folder=/1`);
+    const cleanText = finalAnswerText.replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ").replace(/\s+/g, " ").trim();
 
-  } catch (globalErr) {
-    console.error("❌ שגיאה כללית בטיפול בבקשה:", globalErr.message, globalErr.stack);
+    logConversationToSupabase(userPhone, transcribedText, cleanText, usedModelName);
+
+    if (transcribedText && !transcribedText.startsWith("[שמע")) {
+      userSession.history.push({ role: "user", content: transcribedText });
+      userSession.history.push({ role: "assistant", content: cleanText });
+      if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
+      conversationHistory.set(userPhone, userSession);
+    }
+
     res.set("Content-Type", "text/plain; charset=utf-8");
-    res.send(`id_list_message=t-אירעה שגיאה במערכת אנא נסה שוב&go_to_folder=/1`);
+    return res.send(buildGoogleTtsMessage(cleanText));
+
+  } catch (error) {
+    console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
+    res.set("Content-Type", "text/plain; charset=utf-8");
+    return res.send(buildGoogleTtsMessage("חלה שגיאה במערכת אנא נסה שנית"));
   }
 };
 
 app.all("/", handleAudioRequest);
 app.all("/process-audio", handleAudioRequest);
 
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, async () => {
-  console.log(`🚀 השרת פעיל ומאזין בפורט ${PORT}`);
-  await loadBannedPhones();
+loadBannedPhones().then(() => {
+  const PORT = process.env.PORT || 10000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
 });
