@@ -23,7 +23,6 @@ async function loadBannedPhones() {
       .single();
     
     if (error) {
-      // אם השגיאה היא שלא נמצאה שורה (PGRST116), זה תקין בהרצה ראשונה
       if (error.code === 'PGRST116') {
         console.log("ℹ️ מפתח המספרים החסומים טרם קיים בטבלה (זוהי כנראה הרצה ראשונה). ממשיך רגיל.");
         return;
@@ -477,7 +476,7 @@ const handleAudioRequest = async (req, res) => {
     let finalAnswerText = "";
     let usedModelName = "unknown";
     
-    const basePersonality = "אתה עוזר קולי יעיל. כאשר שואלים אותך מה חדש חדשות או שאלות עובדתיות ענה באופן עובדתי ואינפורמטיבי. כלל ברזל חשוב: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אל תאמר שאין לך גישה לאינטרנט או שאתה מודל שפה. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
+    const basePersonality = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
     
     const systemInstruction = isDeepRequested
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
@@ -485,8 +484,9 @@ const handleAudioRequest = async (req, res) => {
 
     const isTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     const lowerTranscription = transcribedText.toLowerCase();
-    const needsSearch = lowerTranscription.startsWith("חפש") || lowerTranscription.includes(" חפש ") ||
-                        lowerTranscription.includes("חדשות") || lowerTranscription.includes("עדכון") || lowerTranscription.includes("היום");
+
+    const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר"];
+    const needsSearch = isTranscriptionWeak || SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
 
     const isGeminiOnCooldown = Date.now() < geminiCooldownUntil;
 
@@ -536,44 +536,13 @@ const handleAudioRequest = async (req, res) => {
               break;
             }
           } catch (err) {
-            const statusCode = err.response?.status;
-            if (statusCode === 429) {
+            if (err.response?.status === 429) {
+              console.warn(`⚠️ Gemini API 429 (Rate Limit). מפעיל הדרגתיות להגבלת בקשות...`);
               geminiCooldownUntil = Date.now() + 10 * 60 * 1000;
             }
+            console.error(`❌ שגיאה בקריאה ל-Gemini (${model}):`, err.message);
           }
         }
-      }
-    }
-
-    // --- שלב 2: OpenRouter ---
-    if (!finalAnswerText && openRouterKeys.length > 0 && transcribedText && !transcribedText.startsWith("[שמע")) {
-      const messagesPayload = [
-        { role: "system", content: systemInstruction },
-        ...userSession.history,
-        { role: "user", content: transcribedText }
-      ];
-
-      for (let i = 0; i < openRouterKeys.length; i++) {
-        if (finalAnswerText) break;
-        try {
-          const openRouterCompletion = await axios.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            { model: "openrouter/free", messages: messagesPayload, temperature: 0.3 },
-            { 
-              headers: { 
-                "Authorization": `Bearer ${openRouterKeys[i].trim()}`, 
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://yemot-telephony-ai.com"
-              }, 
-              timeout: 12000 
-            }
-          );
-          finalAnswerText = openRouterCompletion.data?.choices?.[0]?.message?.content || "";
-          if (finalAnswerText) {
-            usedModelName = "openrouter/free";
-            break;
-          }
-        } catch (err) {}
       }
     }
 
@@ -596,12 +565,8 @@ const handleAudioRequest = async (req, res) => {
       return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
     }
 
-    const cleanText = finalAnswerText
-      .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ") 
-      .replace(/\s+/g, " ")                             
-      .trim();
+    const cleanText = finalAnswerText.replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ").replace(/\s+/g, " ").trim();
 
-    // שמירת השיחה לטבלה ב-Supabase (ברקע)
     logConversationToSupabase(userPhone, transcribedText, cleanText, usedModelName);
 
     if (transcribedText && !transcribedText.startsWith("[שמע")) {
