@@ -270,11 +270,50 @@ app.get("/health", (req, res) => {
   });
 });
 
+/**
+ * בניית הודעת Google Translate TTS בפורמט שמותאם במדויק לימות המשיח (למניעת ניתוקי שיחה)
+ */
+function buildGoogleTtsMessage(text) {
+  try {
+    if (!text) return `id_list_message=t-לא התקבלה תשובה&go_to_folder=/1`;
+
+    const cleanText = text.replace(/[\n\r]+/g, " ").trim();
+    
+    // חלוקת הטקסט למקטעים של עד 160 תווים
+    const chunks = [];
+    let currentChunk = "";
+    const words = cleanText.split(" ");
+
+    for (const word of words) {
+      if ((currentChunk + " " + word).trim().length > 160) {
+        if (currentChunk) chunks.push(currentChunk.trim());
+        currentChunk = word;
+      } else {
+        currentChunk += (currentChunk ? " " : "") + word;
+      }
+    }
+    if (currentChunk) chunks.push(currentChunk.trim());
+
+    // יצירת כתובות URL מלאות ומקודדות
+    const ttsUrls = chunks.map(chunk => {
+      const fullUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=he&client=tw-ob`;
+      return encodeURIComponent(fullUrl);
+    });
+
+    // שימוש ב-~ להפרדה בין קבצים ברצף בימות המשיח
+    const urlPayload = ttsUrls.join("~");
+    return `id_list_message=${urlPayload}&go_to_folder=/1`;
+  } catch (err) {
+    console.error("❌ שגיאה ביצירת Google Translate TTS:", err.message);
+    return `id_list_message=t-${text}&go_to_folder=/1`;
+  }
+}
+
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   return axios.post(geminiUrl, payload, { 
     headers: { "Content-Type": "application/json" }, 
-    timeout: 12000 
+    timeout: 20000 
   });
 };
 
@@ -293,13 +332,13 @@ const handleAudioRequest = async (req, res) => {
     if (!token) {
       console.log("❌ שגיאה: לא נמצא טוקן (Token) לאימות מול ימות המשיח.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-שגיאת אימות טוקן חסר&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("שגיאת אימות טוקן חסר"));
     }
 
     if (!checkRateLimit(userPhone)) {
       console.warn(`Rate limit exceeded for phone: ${userPhone}`);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-חרגת ממספר הפניות המותר בדקה. נסה שוב מאוחר יותר.&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר"));
     }
 
     const callId = params.ApiCallId || params.ApiYFCallId;
@@ -322,7 +361,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (bannedPhones.has(userPhone)) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
     }
 
     let userSession = conversationHistory.get(userPhone) || { 
@@ -410,7 +449,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (!audioBuffer) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("לא נמצאה הקלטה תקינה אנא הקלט שוב"));
     }
 
     let transcribedText = "";
@@ -432,6 +471,14 @@ const handleAudioRequest = async (req, res) => {
       } catch (err) {}
     }
 
+    // --- בדיקת תקינות התמלול (אם ריק או פחות מ-2 מילים, החזר בקשה לדבר ברור יותר) ---
+    const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
+    if (!transcribedText || transcriptionWords.length < 2) {
+      console.log(`⚠️ תמלול חלש או ריק ("${transcribedText}"). מדלג על פנייה לגמיני.`);
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(`id_list_message=t-אנא דבר יותר לאט וברור&go_to_folder=/1`);
+    }
+
     const normalizedTranscription = normalizeText(transcribedText);
 
     const isBlocked = BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword));
@@ -440,14 +487,14 @@ const handleAudioRequest = async (req, res) => {
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
         res.set("Content-Type", "text/plain; charset=utf-8");
-        return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+        return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
       }
 
       userSession.lastActive = Date.now();
       conversationHistory.set(userPhone, userSession);
       const warningMsg = getWarningMessage(userSession.blockedAttempts);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage(warningMsg));
     }
 
     const isResetRequested = RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -462,7 +509,7 @@ const handleAudioRequest = async (req, res) => {
       });
 
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-השיחה אופסה בהצלחה במה אוכל לעזור&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("השיחה אופסה בהצלחה במה אוכל לעזור"));
     }
 
     const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -482,11 +529,9 @@ const handleAudioRequest = async (req, res) => {
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
       : `${basePersonality} ענה בציטוט קצר ותמציתי עד 35 מילים בלבד.`;
 
-    const isTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     const lowerTranscription = transcribedText.toLowerCase();
-
     const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר"];
-    const needsSearch = isTranscriptionWeak || SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
+    const needsSearch = SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
 
     const isGeminiOnCooldown = Date.now() < geminiCooldownUntil;
 
@@ -508,17 +553,7 @@ const handleAudioRequest = async (req, res) => {
         });
       });
 
-      if (isTranscriptionWeak) {
-        geminiContents.push({
-          role: "user",
-          parts: [
-            { text: isDeepRequested ? "האזן להקלטה הבאה וענה בהרחבה ומפורט:" : "האזן להקלטה הבאה והשב עליה בקצרה עד 35 מילים:" },
-            { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }
-          ]
-        });
-      } else {
-        geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
-      }
+      geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
 
       const payload = { contents: geminiContents };
       if (needsSearch) payload.tools = [{ googleSearch: {} }];
@@ -532,7 +567,6 @@ const handleAudioRequest = async (req, res) => {
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               usedModelName = `gemini (${model})`;
-              if (isTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
               break;
             }
           } catch (err) {
@@ -557,32 +591,30 @@ const handleAudioRequest = async (req, res) => {
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
         res.set("Content-Type", "text/plain; charset=utf-8");
-        return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
+        return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
       }
       conversationHistory.set(userPhone, userSession);
       const warningMsg = getWarningMessage(userSession.blockedAttempts);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage(warningMsg));
     }
 
     const cleanText = finalAnswerText.replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ").replace(/\s+/g, " ").trim();
 
     logConversationToSupabase(userPhone, transcribedText, cleanText, usedModelName);
 
-    if (transcribedText && !transcribedText.startsWith("[שמע")) {
-      userSession.history.push({ role: "user", content: transcribedText });
-      userSession.history.push({ role: "assistant", content: cleanText });
-      if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
-      conversationHistory.set(userPhone, userSession);
-    }
+    userSession.history.push({ role: "user", content: transcribedText });
+    userSession.history.push({ role: "assistant", content: cleanText });
+    if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
+    conversationHistory.set(userPhone, userSession);
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
+    return res.send(buildGoogleTtsMessage(cleanText));
 
   } catch (error) {
     console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(`id_list_message=t-חלה שגיאה במערכת אנא נסה שנית&go_to_folder=/1`);
+    return res.send(buildGoogleTtsMessage("חלה שגיאה במערכת אנא נסה שנית"));
   }
 };
 
