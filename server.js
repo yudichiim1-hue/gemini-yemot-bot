@@ -299,7 +299,7 @@ const handleAudioRequest = async (req, res) => {
     if (!checkRateLimit(userPhone)) {
       console.warn(`Rate limit exceeded for phone: ${userPhone}`);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-חרגת ממספר הפניות המותר בדקה. נסה שוב מאוחר יותר.&go_to_folder=/1`);
+      return res.send(`id_list_message=t-חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר&go_to_folder=/1`);
     }
 
     const callId = params.ApiCallId || params.ApiYFCallId;
@@ -432,6 +432,14 @@ const handleAudioRequest = async (req, res) => {
       } catch (err) {}
     }
 
+    // --- טיפול בתמלול חלש או ריק בצורה בטוחה בלי קריסת מולטימדיה לגמיני ---
+    const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
+    if (!transcribedText || transcriptionWords.length < 2) {
+      console.log(`⚠️ תמלול חלש או ריק ("${transcribedText}").`);
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      return res.send(`id_list_message=t-אנא דבר יותר לאט וברור&go_to_folder=/1`);
+    }
+
     const normalizedTranscription = normalizeText(transcribedText);
 
     const isBlocked = BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword));
@@ -482,11 +490,9 @@ const handleAudioRequest = async (req, res) => {
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
       : `${basePersonality} ענה בציטוט קצר ותמציתי עד 35 מילים בלבד.`;
 
-    const isTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     const lowerTranscription = transcribedText.toLowerCase();
-
     const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר"];
-    const needsSearch = isTranscriptionWeak || SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
+    const needsSearch = SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
 
     const isGeminiOnCooldown = Date.now() < geminiCooldownUntil;
 
@@ -508,17 +514,7 @@ const handleAudioRequest = async (req, res) => {
         });
       });
 
-      if (isTranscriptionWeak) {
-        geminiContents.push({
-          role: "user",
-          parts: [
-            { text: isDeepRequested ? "האזן להקלטה הבאה וענה בהרחבה ומפורט:" : "האזן להקלטה הבאה והשב עליה בקצרה עד 35 מילים:" },
-            { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }
-          ]
-        });
-      } else {
-        geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
-      }
+      geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
 
       const payload = { contents: geminiContents };
       if (needsSearch) payload.tools = [{ googleSearch: {} }];
@@ -532,7 +528,6 @@ const handleAudioRequest = async (req, res) => {
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               usedModelName = `gemini (${model})`;
-              if (isTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
               break;
             }
           } catch (err) {
@@ -569,12 +564,10 @@ const handleAudioRequest = async (req, res) => {
 
     logConversationToSupabase(userPhone, transcribedText, cleanText, usedModelName);
 
-    if (transcribedText && !transcribedText.startsWith("[שמע")) {
-      userSession.history.push({ role: "user", content: transcribedText });
-      userSession.history.push({ role: "assistant", content: cleanText });
-      if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
-      conversationHistory.set(userPhone, userSession);
-    }
+    userSession.history.push({ role: "user", content: transcribedText });
+    userSession.history.push({ role: "assistant", content: cleanText });
+    if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
+    conversationHistory.set(userPhone, userSession);
 
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
