@@ -12,7 +12,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 const bannedPhones = new Set();
 
-// טעינת מספרים חסומים מ-Supabase בעליית השרת (כולל לוגים מפורטים)
+// טעינת מספרים חסומים מ-Supabase בעליית השרת
 async function loadBannedPhones() {
   try {
     console.log("🔍 מנסה לטעון מספרים חסומים מ-Supabase (טבלה: bot_storage, מפתח: banned_phones)...");
@@ -43,17 +43,17 @@ async function loadBannedPhones() {
       console.log("ℹ️ הנתונים שהתקבלו עבור מספרים חסומים אינם מערך תקין:", data);
     }
   } catch (err) {
-    console.error("❌ שגיאה חריגה (Exception) בטעינת מספרים חסומים מ-Supabase:", err.message, err.stack);
+    console.error("❌ שגיאה חריגה בטעינת מספרים חסומים מ-Supabase:", err.message, err.stack);
   }
 }
 
-// שמירת מספרים חסומים ל-Supabase (כולל לוגים מפורטים)
+// שמירת מספרים חסומים ל-Supabase
 async function saveBannedPhones() {
   try {
     const phonesArray = Array.from(bannedPhones);
     console.log(`💾 מנסה לשמור ${phonesArray.length} מספרים חסומים ל-Supabase...`);
     
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('bot_storage')
       .upsert({ key: 'banned_phones', value: phonesArray });
       
@@ -68,17 +68,17 @@ async function saveBannedPhones() {
     }
     console.log("💾 מספרים חסומים נשמרו בהצלחה ב-Supabase.");
   } catch (err) {
-    console.error("❌ שגיאה חריגה (Exception) בשמירת מספרים חסומים ל-Supabase:", err.message);
+    console.error("❌ שגיאה חריגה בשמירת מספרים חסומים ל-Supabase:", err.message);
   }
 }
 
-// פונקציית שמירת שיחה לטבלת היסטוריה ב-Supabase (כולל לוגים מפורטים)
+// שמירת שיחה לטבלת היסטוריה ב-Supabase
 async function logConversationToSupabase(phone, question, answer, modelName) {
   try {
     const payload = { phone, question, answer, model: modelName };
     console.log("📝 שולח נתוני שיחה לטבלת conversation_logs ב-Supabase:", payload);
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('conversation_logs')
       .insert([payload]);
 
@@ -93,7 +93,7 @@ async function logConversationToSupabase(phone, question, answer, modelName) {
       console.log("✅ השיחה נרשמה בהצלחה ב-Supabase.");
     }
   } catch (err) {
-    console.error("❌ שגיאה חריגה (Exception) ברישום השיחה ל-Supabase:", err.message);
+    console.error("❌ שגיאה חריגה ברישום השיחה ל-Supabase:", err.message);
   }
 }
 
@@ -115,18 +115,16 @@ if (process.env.INITIAL_BANNED_PHONES) {
 
 const processedCalls = new Map();
 const conversationHistory = new Map();
-const requestLimits = new Map(); // הגנת Rate Limit לפי מספר טלפון
+const requestLimits = new Map();
 
-// פונקציית בדיקת Rate Limit (עד 10 פניות בדקה למספר)
+// בדיקת Rate Limit (עד 10 פניות בדקה למספר)
 const checkRateLimit = (phone) => {
   if (!phone || phone === "default_user") return true;
   const now = Date.now();
   const userLog = requestLimits.get(phone) || [];
   const recentRequests = userLog.filter(timestamp => now - timestamp < 60000);
   
-  if (recentRequests.length >= 10) {
-    return false;
-  }
+  if (recentRequests.length >= 10) return false;
   
   recentRequests.push(now);
   requestLimits.set(phone, recentRequests);
@@ -146,9 +144,7 @@ const blockUserPermanently = async (phone) => {
 
 const unblockUser = async (phone) => {
   const existed = bannedPhones.delete(phone);
-  if (existed) {
-    await saveBannedPhones();
-  }
+  if (existed) await saveBannedPhones();
   return existed;
 };
 
@@ -218,20 +214,13 @@ const authenticateAdmin = (req, res, next) => {
   const adminKey = process.env.ADMIN_KEY;
   const providedKey = req.query.key || req.body?.key;
 
-  if (!adminKey) {
-    return res.status(500).json({ error: "ADMIN_KEY isn't defined in server environment variables" });
-  }
-  if (!providedKey || providedKey !== adminKey) {
-    return res.status(401).json({ error: "Unauthorized: Invalid or missing admin key" });
-  }
+  if (!adminKey) return res.status(500).json({ error: "ADMIN_KEY isn't defined in server environment variables" });
+  if (!providedKey || providedKey !== adminKey) return res.status(401).json({ error: "Unauthorized: Invalid or missing admin key" });
   next();
 };
 
 app.get("/admin/banned", authenticateAdmin, (req, res) => {
-  res.status(200).json({
-    totalBanned: bannedPhones.size,
-    bannedPhones: Array.from(bannedPhones)
-  });
+  res.status(200).json({ totalBanned: bannedPhones.size, bannedPhones: Array.from(bannedPhones) });
 });
 
 app.get("/admin/add-ban", authenticateAdmin, async (req, res) => {
@@ -239,10 +228,7 @@ app.get("/admin/add-ban", authenticateAdmin, async (req, res) => {
   if (!phone) return res.status(400).json({ error: "Missing 'phone' parameter" });
 
   await blockUserPermanently(phone);
-  res.status(200).json({
-    message: `Phone number ${phone} added to banned list successfully`,
-    totalBanned: bannedPhones.size
-  });
+  res.status(200).json({ message: `Phone number ${phone} added to banned list successfully`, totalBanned: bannedPhones.size });
 });
 
 app.get("/admin/remove-ban", authenticateAdmin, async (req, res) => {
@@ -250,12 +236,7 @@ app.get("/admin/remove-ban", authenticateAdmin, async (req, res) => {
   if (!phone) return res.status(400).json({ error: "Missing 'phone' parameter" });
 
   const existed = await unblockUser(phone);
-  res.status(200).json({
-    message: existed
-      ? `Phone number ${phone} removed from banned list successfully`
-      : `Phone number ${phone} was not in the banned list`,
-    totalBanned: bannedPhones.size
-  });
+  res.status(200).json({ message: existed ? `Phone number ${phone} removed from banned list successfully` : `Phone number ${phone} was not in the banned list`, totalBanned: bannedPhones.size });
 });
 
 app.get("/ping", (req, res) => res.status(200).send("PONG"));
@@ -271,7 +252,7 @@ app.get("/health", (req, res) => {
 });
 
 /**
- * בניית הודעת Google Translate TTS בפורמט שמותאם במדויק לימות המשיח (למניעת ניתוקי שיחה ושגיאות הקראה)
+ * בניית תגובת השמעה תקינה לימות המשיח מול Google Translate TTS
  */
 function buildGoogleTtsMessage(text) {
   try {
@@ -279,7 +260,7 @@ function buildGoogleTtsMessage(text) {
 
     const cleanText = text.replace(/[\n\r]+/g, " ").trim();
     
-    // חלוקת הטקסט למקטעים של עד 160 תווים
+    // חלוקת הטקסט לפי אורך מקסימלי של 160 תווים (כדי למנוע חריגה)
     const chunks = [];
     let currentChunk = "";
     const words = cleanText.split(" ");
@@ -294,13 +275,14 @@ function buildGoogleTtsMessage(text) {
     }
     if (currentChunk) chunks.push(currentChunk.trim());
 
-    // יצירת כתובות URL מלאות ומקודדות
+    // יצירת URL מקודד מלא לכל מקטע
     const ttsUrls = chunks.map(chunk => {
       const fullUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=he&client=tw-ob`;
+      // קידוד מלא של כל ה-URL כדי שתווים כמו ? ו-& לא ישברו את ימות המשיח
       return encodeURIComponent(fullUrl);
     });
 
-    // שימוש ב-~ להפרדה בין קבצים ברצף בימות המשיח
+    // ימות המשיח דורשת הפרדה של ~ בין קבצי שמע ברצף
     const urlPayload = ttsUrls.join("~");
     return `id_list_message=${urlPayload}&go_to_folder=/1`;
   } catch (err) {
@@ -471,14 +453,6 @@ const handleAudioRequest = async (req, res) => {
       } catch (err) {}
     }
 
-    // --- בדיקת תקינות התמלול (אם ריק או פחות מ-2 מילים, החזר בקשה לדבר ברור יותר באמצעות Google TTS) ---
-    const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
-    if (!transcribedText || transcriptionWords.length < 2) {
-      console.log(`⚠️ תמלול חלש או ריק ("${transcribedText}"). מדלג על פנייה לגמיני.`);
-      res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(buildGoogleTtsMessage("אנא דבר יותר לאט וברור"));
-    }
-
     const normalizedTranscription = normalizeText(transcribedText);
 
     const isBlocked = BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword));
@@ -529,9 +503,11 @@ const handleAudioRequest = async (req, res) => {
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
       : `${basePersonality} ענה בציטוט קצר ותמציתי עד 35 מילים בלבד.`;
 
+    const isTranscriptionWeak = !transcribedText || transcribedText.split(" ").length < 2;
     const lowerTranscription = transcribedText.toLowerCase();
+
     const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר"];
-    const needsSearch = SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
+    const needsSearch = isTranscriptionWeak || SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
 
     const isGeminiOnCooldown = Date.now() < geminiCooldownUntil;
 
@@ -553,7 +529,17 @@ const handleAudioRequest = async (req, res) => {
         });
       });
 
-      geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
+      if (isTranscriptionWeak) {
+        geminiContents.push({
+          role: "user",
+          parts: [
+            { text: isDeepRequested ? "האזן להקלטה הבאה וענה בהרחבה ומפורט:" : "האזן להקלטה הבאה והשב עליה בקצרה עד 35 מילים:" },
+            { inlineData: { mimeType: "audio/wav", data: audioBuffer.toString("base64") } }
+          ]
+        });
+      } else {
+        geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
+      }
 
       const payload = { contents: geminiContents };
       if (needsSearch) payload.tools = [{ googleSearch: {} }];
@@ -567,6 +553,7 @@ const handleAudioRequest = async (req, res) => {
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               usedModelName = `gemini (${model})`;
+              if (isTranscriptionWeak) transcribedText = "[שמע שפוענח ישירות ע״י Gemini]";
               break;
             }
           } catch (err) {
@@ -603,10 +590,12 @@ const handleAudioRequest = async (req, res) => {
 
     logConversationToSupabase(userPhone, transcribedText, cleanText, usedModelName);
 
-    userSession.history.push({ role: "user", content: transcribedText });
-    userSession.history.push({ role: "assistant", content: cleanText });
-    if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
-    conversationHistory.set(userPhone, userSession);
+    if (transcribedText && !transcribedText.startsWith("[שמע")) {
+      userSession.history.push({ role: "user", content: transcribedText });
+      userSession.history.push({ role: "assistant", content: cleanText });
+      if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
+      conversationHistory.set(userPhone, userSession);
+    }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.send(buildGoogleTtsMessage(cleanText));
