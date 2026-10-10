@@ -252,7 +252,7 @@ app.get("/health", (req, res) => {
 });
 
 /**
- * בניית תגובת השמעה תקינה לימות המשיח מול Google Translate TTS
+ * בניית כתובות שמע של Google Translate TTS ללא ספריות חיצוניות נוספות
  */
 function buildGoogleTtsMessage(text) {
   try {
@@ -260,13 +260,13 @@ function buildGoogleTtsMessage(text) {
 
     const cleanText = text.replace(/[\n\r]+/g, " ").trim();
     
-    // חלוקת הטקסט לפי אורך מקסימלי של 160 תווים (כדי למנוע חריגה)
+    // חלוקת הטקסט לפי אורך מקסימלי של 180 תווים (מגבלת שרת Google TTS)
     const chunks = [];
     let currentChunk = "";
     const words = cleanText.split(" ");
 
     for (const word of words) {
-      if ((currentChunk + " " + word).trim().length > 160) {
+      if ((currentChunk + " " + word).trim().length > 180) {
         if (currentChunk) chunks.push(currentChunk.trim());
         currentChunk = word;
       } else {
@@ -275,15 +275,13 @@ function buildGoogleTtsMessage(text) {
     }
     if (currentChunk) chunks.push(currentChunk.trim());
 
-    // יצירת URL מקודד מלא לכל מקטע
+    // יצירת כתובות URL עבור כל מקטע
     const ttsUrls = chunks.map(chunk => {
-      const fullUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=he&client=tw-ob`;
-      // קידוד מלא של כל ה-URL כדי שתווים כמו ? ו-& לא ישברו את ימות המשיח
-      return encodeURIComponent(fullUrl);
+      const encodedText = encodeURIComponent(chunk);
+      return `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodedText}&tl=he&client=tw-ob`;
     });
 
-    // ימות המשיח דורשת הפרדה של ~ בין קבצי שמע ברצף
-    const urlPayload = ttsUrls.join("~");
+    const urlPayload = ttsUrls.join("&");
     return `id_list_message=${urlPayload}&go_to_folder=/1`;
   } catch (err) {
     console.error("❌ שגיאה ביצירת Google Translate TTS:", err.message);
