@@ -271,7 +271,7 @@ app.get("/health", (req, res) => {
 });
 
 /**
- * בניית הודעת Google Translate TTS בפורמט שמותאם במדויק לימות המשיח (למניעת ניתוקי שיחה)
+ * בניית הודעת Google Translate TTS בפורמט שמותאם במדויק לימות המשיח (למניעת ניתוקי שיחה ושגיאות הקראה)
  */
 function buildGoogleTtsMessage(text) {
   try {
@@ -471,12 +471,12 @@ const handleAudioRequest = async (req, res) => {
       } catch (err) {}
     }
 
-    // --- בדיקת תקינות התמלול (אם ריק או פחות מ-2 מילים, החזר בקשה לדבר ברור יותר) ---
+    // --- בדיקת תקינות התמלול (אם ריק או פחות מ-2 מילים, החזר בקשה לדבר ברור יותר באמצעות Google TTS) ---
     const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
     if (!transcribedText || transcriptionWords.length < 2) {
       console.log(`⚠️ תמלול חלש או ריק ("${transcribedText}"). מדלג על פנייה לגמיני.`);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`id_list_message=t-אנא דבר יותר לאט וברור&go_to_folder=/1`);
+      return res.send(buildGoogleTtsMessage("אנא דבר יותר לאט וברור"));
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
