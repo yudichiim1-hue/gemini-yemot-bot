@@ -12,7 +12,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 const bannedPhones = new Set();
 
-// טעינת מספרים חסומים מ-Supabase בעליית השרת
+// טעינת מספרים חסומים מ-Supabase בעליית השרת (כולל לוגים מפורטים)
 async function loadBannedPhones() {
   try {
     console.log("🔍 מנסה לטעון מספרים חסומים מ-Supabase (טבלה: bot_storage, מפתח: banned_phones)...");
@@ -43,17 +43,17 @@ async function loadBannedPhones() {
       console.log("ℹ️ הנתונים שהתקבלו עבור מספרים חסומים אינם מערך תקין:", data);
     }
   } catch (err) {
-    console.error("❌ שגיאה חריגה בטעינת מספרים חסומים מ-Supabase:", err.message, err.stack);
+    console.error("❌ שגיאה חריגה (Exception) בטעינת מספרים חסומים מ-Supabase:", err.message, err.stack);
   }
 }
 
-// שמירת מספרים חסומים ל-Supabase
+// שמירת מספרים חסומים ל-Supabase (כולל לוגים מפורטים)
 async function saveBannedPhones() {
   try {
     const phonesArray = Array.from(bannedPhones);
     console.log(`💾 מנסה לשמור ${phonesArray.length} מספרים חסומים ל-Supabase...`);
     
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('bot_storage')
       .upsert({ key: 'banned_phones', value: phonesArray });
       
@@ -68,17 +68,17 @@ async function saveBannedPhones() {
     }
     console.log("💾 מספרים חסומים נשמרו בהצלחה ב-Supabase.");
   } catch (err) {
-    console.error("❌ שגיאה חריגה בשמירת מספרים חסומים ל-Supabase:", err.message);
+    console.error("❌ שגיאה חריגה (Exception) בשמירת מספרים חסומים ל-Supabase:", err.message);
   }
 }
 
-// שמירת שיחה לטבלת היסטוריה ב-Supabase
+// פונקציית שמירת שיחה לטבלת היסטוריה ב-Supabase (כולל לוגים מפורטים)
 async function logConversationToSupabase(phone, question, answer, modelName) {
   try {
     const payload = { phone, question, answer, model: modelName };
     console.log("📝 שולח נתוני שיחה לטבלת conversation_logs ב-Supabase:", payload);
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('conversation_logs')
       .insert([payload]);
 
@@ -93,7 +93,7 @@ async function logConversationToSupabase(phone, question, answer, modelName) {
       console.log("✅ השיחה נרשמה בהצלחה ב-Supabase.");
     }
   } catch (err) {
-    console.error("❌ שגיאה חריגה ברישום השיחה ל-Supabase:", err.message);
+    console.error("❌ שגיאה חריגה (Exception) ברישום השיחה ל-Supabase:", err.message);
   }
 }
 
@@ -115,16 +115,18 @@ if (process.env.INITIAL_BANNED_PHONES) {
 
 const processedCalls = new Map();
 const conversationHistory = new Map();
-const requestLimits = new Map();
+const requestLimits = new Map(); // הגנת Rate Limit לפי מספר טלפון
 
-// בדיקת Rate Limit (עד 10 פניות בדקה למספר)
+// פונקציית בדיקת Rate Limit (עד 10 פניות בדקה למספר)
 const checkRateLimit = (phone) => {
   if (!phone || phone === "default_user") return true;
   const now = Date.now();
   const userLog = requestLimits.get(phone) || [];
   const recentRequests = userLog.filter(timestamp => now - timestamp < 60000);
   
-  if (recentRequests.length >= 10) return false;
+  if (recentRequests.length >= 10) {
+    return false;
+  }
   
   recentRequests.push(now);
   requestLimits.set(phone, recentRequests);
@@ -144,7 +146,9 @@ const blockUserPermanently = async (phone) => {
 
 const unblockUser = async (phone) => {
   const existed = bannedPhones.delete(phone);
-  if (existed) await saveBannedPhones();
+  if (existed) {
+    await saveBannedPhones();
+  }
   return existed;
 };
 
@@ -214,13 +218,20 @@ const authenticateAdmin = (req, res, next) => {
   const adminKey = process.env.ADMIN_KEY;
   const providedKey = req.query.key || req.body?.key;
 
-  if (!adminKey) return res.status(500).json({ error: "ADMIN_KEY isn't defined in server environment variables" });
-  if (!providedKey || providedKey !== adminKey) return res.status(401).json({ error: "Unauthorized: Invalid or missing admin key" });
+  if (!adminKey) {
+    return res.status(500).json({ error: "ADMIN_KEY isn't defined in server environment variables" });
+  }
+  if (!providedKey || providedKey !== adminKey) {
+    return res.status(401).json({ error: "Unauthorized: Invalid or missing admin key" });
+  }
   next();
 };
 
 app.get("/admin/banned", authenticateAdmin, (req, res) => {
-  res.status(200).json({ totalBanned: bannedPhones.size, bannedPhones: Array.from(bannedPhones) });
+  res.status(200).json({
+    totalBanned: bannedPhones.size,
+    bannedPhones: Array.from(bannedPhones)
+  });
 });
 
 app.get("/admin/add-ban", authenticateAdmin, async (req, res) => {
@@ -228,7 +239,10 @@ app.get("/admin/add-ban", authenticateAdmin, async (req, res) => {
   if (!phone) return res.status(400).json({ error: "Missing 'phone' parameter" });
 
   await blockUserPermanently(phone);
-  res.status(200).json({ message: `Phone number ${phone} added to banned list successfully`, totalBanned: bannedPhones.size });
+  res.status(200).json({
+    message: `Phone number ${phone} added to banned list successfully`,
+    totalBanned: bannedPhones.size
+  });
 });
 
 app.get("/admin/remove-ban", authenticateAdmin, async (req, res) => {
@@ -236,7 +250,12 @@ app.get("/admin/remove-ban", authenticateAdmin, async (req, res) => {
   if (!phone) return res.status(400).json({ error: "Missing 'phone' parameter" });
 
   const existed = await unblockUser(phone);
-  res.status(200).json({ message: existed ? `Phone number ${phone} removed from banned list successfully` : `Phone number ${phone} was not in the banned list`, totalBanned: bannedPhones.size });
+  res.status(200).json({
+    message: existed
+      ? `Phone number ${phone} removed from banned list successfully`
+      : `Phone number ${phone} was not in the banned list`,
+    totalBanned: bannedPhones.size
+  });
 });
 
 app.get("/ping", (req, res) => res.status(200).send("PONG"));
@@ -251,49 +270,11 @@ app.get("/health", (req, res) => {
   });
 });
 
-/**
- * בניית כתובות שמע של Google Translate TTS ללא ספריות חיצוניות נוספות
- */
-function buildGoogleTtsMessage(text) {
-  try {
-    if (!text) return `id_list_message=t-לא התקבלה תשובה&go_to_folder=/1`;
-
-    const cleanText = text.replace(/[\n\r]+/g, " ").trim();
-    
-    // חלוקת הטקסט לפי אורך מקסימלי של 180 תווים (מגבלת שרת Google TTS)
-    const chunks = [];
-    let currentChunk = "";
-    const words = cleanText.split(" ");
-
-    for (const word of words) {
-      if ((currentChunk + " " + word).trim().length > 180) {
-        if (currentChunk) chunks.push(currentChunk.trim());
-        currentChunk = word;
-      } else {
-        currentChunk += (currentChunk ? " " : "") + word;
-      }
-    }
-    if (currentChunk) chunks.push(currentChunk.trim());
-
-    // יצירת כתובות URL עבור כל מקטע
-    const ttsUrls = chunks.map(chunk => {
-      const encodedText = encodeURIComponent(chunk);
-      return `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodedText}&tl=he&client=tw-ob`;
-    });
-
-    const urlPayload = ttsUrls.join("&");
-    return `id_list_message=${urlPayload}&go_to_folder=/1`;
-  } catch (err) {
-    console.error("❌ שגיאה ביצירת Google Translate TTS:", err.message);
-    return `id_list_message=t-${text}&go_to_folder=/1`;
-  }
-}
-
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
   return axios.post(geminiUrl, payload, { 
     headers: { "Content-Type": "application/json" }, 
-    timeout: 20000 
+    timeout: 12000 
   });
 };
 
@@ -312,13 +293,13 @@ const handleAudioRequest = async (req, res) => {
     if (!token) {
       console.log("❌ שגיאה: לא נמצא טוקן (Token) לאימות מול ימות המשיח.");
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(buildGoogleTtsMessage("שגיאת אימות טוקן חסר"));
+      return res.send(`id_list_message=t-שגיאת אימות טוקן חסר&go_to_folder=/1`);
     }
 
     if (!checkRateLimit(userPhone)) {
       console.warn(`Rate limit exceeded for phone: ${userPhone}`);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(buildGoogleTtsMessage("חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר"));
+      return res.send(`id_list_message=t-חרגת ממספר הפניות המותר בדקה. נסה שוב מאוחר יותר.&go_to_folder=/1`);
     }
 
     const callId = params.ApiCallId || params.ApiYFCallId;
@@ -341,7 +322,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (bannedPhones.has(userPhone)) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
+      return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
     }
 
     let userSession = conversationHistory.get(userPhone) || { 
@@ -429,7 +410,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (!audioBuffer) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(buildGoogleTtsMessage("לא נמצאה הקלטה תקינה אנא הקלט שוב"));
+      return res.send(`id_list_message=t-לא נמצאה הקלטה תקינה אנא הקלט שוב&go_to_folder=/1`);
     }
 
     let transcribedText = "";
@@ -459,14 +440,14 @@ const handleAudioRequest = async (req, res) => {
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
         res.set("Content-Type", "text/plain; charset=utf-8");
-        return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
+        return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
       }
 
       userSession.lastActive = Date.now();
       conversationHistory.set(userPhone, userSession);
       const warningMsg = getWarningMessage(userSession.blockedAttempts);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(buildGoogleTtsMessage(warningMsg));
+      return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
     }
 
     const isResetRequested = RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -481,7 +462,7 @@ const handleAudioRequest = async (req, res) => {
       });
 
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(buildGoogleTtsMessage("השיחה אופסה בהצלחה במה אוכל לעזור"));
+      return res.send(`id_list_message=t-השיחה אופסה בהצלחה במה אוכל לעזור&go_to_folder=/1`);
     }
 
     const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -576,12 +557,12 @@ const handleAudioRequest = async (req, res) => {
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
         res.set("Content-Type", "text/plain; charset=utf-8");
-        return res.send(buildGoogleTtsMessage(BANNED_USER_RESPONSE));
+        return res.send(`id_list_message=t-${BANNED_USER_RESPONSE}&go_to_folder=/1`);
       }
       conversationHistory.set(userPhone, userSession);
       const warningMsg = getWarningMessage(userSession.blockedAttempts);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(buildGoogleTtsMessage(warningMsg));
+      return res.send(`id_list_message=t-${warningMsg}&go_to_folder=/1`);
     }
 
     const cleanText = finalAnswerText.replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ").replace(/\s+/g, " ").trim();
@@ -596,12 +577,12 @@ const handleAudioRequest = async (req, res) => {
     }
 
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(buildGoogleTtsMessage(cleanText));
+    return res.send(`id_list_message=t-${cleanText}&go_to_folder=/1`);
 
   } catch (error) {
     console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
     res.set("Content-Type", "text/plain; charset=utf-8");
-    return res.send(buildGoogleTtsMessage("חלה שגיאה במערכת אנא נסה שנית"));
+    return res.send(`id_list_message=t-חלה שגיאה במערכת אנא נסה שנית&go_to_folder=/1`);
   }
 };
 
