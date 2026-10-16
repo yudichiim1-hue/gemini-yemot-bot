@@ -177,6 +177,7 @@ const getWarningMessage = (attempts) => {
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
 const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
+// --- פונקציית מענה מתוקנת לימות המשיח ---
 function sendYemotTtsResponse(res, text) {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
@@ -184,9 +185,11 @@ function sendYemotTtsResponse(res, text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  console.log(`🔊 מחזיר מענה קולי לימות המשיח: "${clean}"`);
+  console.log(`🔊 מחזיר מענה קולי ומבקש הקלטה לימות המשיח: "${clean}"`);
   res.set("Content-Type", "text/plain; charset=utf-8");
-  return res.send(`id_list_message=t-${clean}&go_to_folder=/1`);
+  
+  // משמיע את הטקסט ואז מיד פותח הקלטה ושומר אותה בתיקיית Transcription בשם last.wav
+  return res.send(`id_list_message=t-${clean}&read=path=Transcription/last.wav&no_root=yes`);
 }
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
@@ -322,7 +325,7 @@ const handleAudioRequest = async (req, res) => {
 
     // --- מענה לבקשה ראשונית ללא הקלטה ---
     if (!audioBuffer) {
-      console.log("👋 לא נמצאה הקלטה תקינה (פנייה ראשונית). מחזיר הודעת פתיחה.");
+      console.log("👋 לא נמצאה הקלטה תקינה (פנייה ראשונית). מחזיר הודעת פתיחה ומבקש הקלטה.");
       return sendYemotTtsResponse(res, "היי מה קורה");
     }
 
@@ -352,8 +355,8 @@ const handleAudioRequest = async (req, res) => {
     // --- מענה אם התמלול ריק או לא מובן ---
     const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
     if (!transcribedText || transcriptionWords.length < 1) {
-      console.log("👋 תמלול ריק. מחזיר הודעת פתיחה.");
-      return sendYemotTtsResponse(res, "היי מה קורה");
+      console.log("👋 תמלול ריק. מחזיר הודעה ומבקש הקלטה חוזרת.");
+      return sendYemotTtsResponse(res, "אנא דבר יותר לאט וברור");
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
