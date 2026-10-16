@@ -177,19 +177,16 @@ const getWarningMessage = (attempts) => {
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
 const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
-// --- פונקציית מענה מתוקנת לימות המשיח ---
-function sendYemotTtsResponse(res, text) {
+function sendYemotTtsResponse(res, text, currentFolder = "1") {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
     .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  console.log(`🔊 מחזיר מענה קולי ומבקש הקלטה לימות המשיח: "${clean}"`);
+  console.log(`🔊 מחזיר מענה קולי לימות המשיח: "${clean}"`);
   res.set("Content-Type", "text/plain; charset=utf-8");
-  
-  // משמיע את הטקסט ואז מיד פותח הקלטה ושומר אותה בתיקיית Transcription בשם last.wav
-  return res.send(`id_list_message=t-${clean}&read=path=Transcription/last.wav&no_root=yes`);
+  return res.send(`id_list_message=t-${clean}&go_to_folder=/${currentFolder}`);
 }
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
@@ -323,10 +320,9 @@ const handleAudioRequest = async (req, res) => {
       } catch (err) {}
     }
 
-    // --- מענה לבקשה ראשונית ללא הקלטה ---
     if (!audioBuffer) {
-      console.log("👋 לא נמצאה הקלטה תקינה (פנייה ראשונית). מחזיר הודעת פתיחה ומבקש הקלטה.");
-      return sendYemotTtsResponse(res, "היי מה קורה");
+      console.log("👋 פנייה ראשונית (אין הקלטה). מחזיר ברכת פתיחה.");
+      return sendYemotTtsResponse(res, "היי מה קורה במה אוכל לעזור", secondaryFolder);
     }
 
     let transcribedText = "";
@@ -352,11 +348,10 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- מענה אם התמלול ריק או לא מובן ---
     const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
     if (!transcribedText || transcriptionWords.length < 1) {
-      console.log("👋 תמלול ריק. מחזיר הודעה ומבקש הקלטה חוזרת.");
-      return sendYemotTtsResponse(res, "אנא דבר יותר לאט וברור");
+      console.log("👋 תמלול ריק. מבקש לדבר שוב.");
+      return sendYemotTtsResponse(res, "לא שמעתי אותך טוב אנא דבר שוב", secondaryFolder);
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
@@ -366,12 +361,12 @@ const handleAudioRequest = async (req, res) => {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
+        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE, secondaryFolder);
       }
 
       userSession.lastActive = Date.now();
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
+      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts), secondaryFolder);
     }
 
     if (RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
@@ -382,7 +377,7 @@ const handleAudioRequest = async (req, res) => {
         lastActive: Date.now(),
         blockedAttempts: userSession.blockedAttempts
       });
-      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור");
+      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור", secondaryFolder);
     }
 
     const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -486,7 +481,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- עדיפות 3: OpenRouter Call (עם הנתב החינמי האוטומטי) ---
+    // --- עדיפות 3: OpenRouter Call ---
     if (!finalAnswerText && openRouterKeys.length > 0) {
       console.log(`🤖 [עדיפות 3] מנסה OpenRouter עם הנתב החינמי (${openRouterKeys.length} מפתחות)...`);
       const openRouterPayload = {
@@ -533,10 +528,10 @@ const handleAudioRequest = async (req, res) => {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
+        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE, secondaryFolder);
       }
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
+      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts), secondaryFolder);
     }
 
     logConversationToSupabase(userPhone, transcribedText, finalAnswerText, usedModelName);
@@ -546,11 +541,11 @@ const handleAudioRequest = async (req, res) => {
     if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
     conversationHistory.set(userPhone, userSession);
 
-    return sendYemotTtsResponse(res, finalAnswerText);
+    return sendYemotTtsResponse(res, finalAnswerText, secondaryFolder);
 
   } catch (error) {
     console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
-    return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית");
+    return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית", "1");
   }
 };
 
