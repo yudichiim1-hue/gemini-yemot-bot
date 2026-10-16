@@ -330,7 +330,6 @@ const handleAudioRequest = async (req, res) => {
 
     if (deepgramApiKey) {
       try {
-        console.🎙️; // placeholder
         console.log("🎙️ שולח קובץ שמע לתמלול ב-Deepgram...");
         const dgResponse = await axios.post(
           "https://api.deepgram.com/v1/listen?language=he&model=nova-3",
@@ -493,4 +492,38 @@ const handleAudioRequest = async (req, res) => {
     }
 
     const normalizedAnswer = normalizeText(finalAnswerText);
-    if (normalizedAnswer.
+    if (normalizedAnswer.includes(BLOCKED_RESPONSE_MARKER)) {
+      console.warn(`⚠️ תשובת המודל הכילה חסימה עבור משתמש ${userPhone}`);
+      userSession.blockedAttempts += 1;
+      if (userSession.blockedAttempts >= 3) {
+        await blockUserPermanently(userPhone);
+        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
+      }
+      conversationHistory.set(userPhone, userSession);
+      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
+    }
+
+    logConversationToSupabase(userPhone, transcribedText, finalAnswerText, usedModelName);
+
+    userSession.history.push({ role: "user", content: transcribedText });
+    userSession.history.push({ role: "assistant", content: finalAnswerText });
+    if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
+    conversationHistory.set(userPhone, userSession);
+
+    return sendYemotTtsResponse(res, finalAnswerText);
+
+  } catch (error) {
+    console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
+    return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית");
+  }
+};
+
+app.all("/", handleAudioRequest);
+app.all("/process-audio", handleAudioRequest);
+
+loadBannedPhones().then(() => {
+  const PORT = process.env.PORT || 10000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
+});
