@@ -250,25 +250,24 @@ const handleAudioRequest = async (req, res) => {
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
+    const parsedOpenAIKeys = new Set([process.env.OPENAI_API_KEY, process.env.OPENAI_API_KEY_1].filter(Boolean));
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
 
-    const directKeys = [
-      params.GEMINI_API_KEY, params.gemini_key, params.GeminiKey, params.AI_KEY,
-      params.API, params.Api, params.api, params.KEY, params.Key, params.key, params.GEMINI
-    ].filter(Boolean);
+    // זיהוי ישיר של פרמטרים מימות המשיח
+    const directGemini = params.GEMINI_API_KEY || params.gemini_key || params.GeminiKey || params.AI_KEY || params.API || params.Api || params.api || params.KEY || params.Key || params.key || params.GEMINI;
+    if (directGemini) parsedGeminiKeys.add(String(directGemini).trim());
 
-    directKeys.forEach(k => {
-      const val = String(k).trim();
-      if (val) parsedGeminiKeys.add(val);
-    });
+    const directOpenAI = params.OPENAI || params.openai || params.OPENAI_API_KEY || params.openai_key || params.OpenAIKey;
+    if (directOpenAI) parsedOpenAIKeys.add(String(directOpenAI).trim());
 
-    const explicitOpenRouter = params.OPENROUTER_API_KEY || params.openrouter_key || params.OpenRouterKey;
-    if (explicitOpenRouter) parsedOpenRouterKeys.add(String(explicitOpenRouter).trim());
+    const directOpenRouter = params.OPENROUTER || params.openrouter || params.OPENROUTER_API_KEY || params.openrouter_key || params.OpenRouterKey;
+    if (directOpenRouter) parsedOpenRouterKeys.add(String(directOpenRouter).trim());
 
-    const explicitDeepgram = params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey;
-    if (explicitDeepgram) parsedDeepgram = String(explicitDeepgram).trim();
+    const directDeepgram = params.DEEPGRAM || params.deepgram || params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey;
+    if (directDeepgram) parsedDeepgram = String(directDeepgram).trim();
 
+    // חילוץ עמוק לכלל הפרמטרים
     const extractKeysDeeply = (obj, depth = 0) => {
       if (depth > 5 || !obj) return; 
       for (const value of Object.values(obj)) {
@@ -277,7 +276,8 @@ const handleAudioRequest = async (req, res) => {
           if (typeof item === "string") {
             const parts = item.split(/[\s,;|]+/).map(p => p.trim()).filter(Boolean);
             for (const part of parts) {
-              if (part.startsWith("AIza")) parsedGeminiKeys.add(part);
+              if (part.startsWith("AIza") || part.startsWith("AQ.")) parsedGeminiKeys.add(part);
+              else if (part.startsWith("sk-proj-") || (part.startsWith("sk-") && !part.startsWith("sk-or-"))) parsedOpenAIKeys.add(part);
               else if (part.startsWith("sk-or-")) parsedOpenRouterKeys.add(part);
               else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) parsedDeepgram = part;
             }
@@ -291,10 +291,11 @@ const handleAudioRequest = async (req, res) => {
     extractKeysDeeply(params);
 
     const geminiKeys = Array.from(parsedGeminiKeys);
+    const openAIKeys = Array.from(parsedOpenAIKeys);
     const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
 
-    console.log(`🔑 מפתחות שזוהו -> Gemini: ${geminiKeys.length} | OpenRouter: ${openRouterKeys.length} | Deepgram: ${deepgramApiKey ? 'כן' : 'לא'}`);
+    console.log(`🔑 מפתחות זוהו במערכת -> Gemini: ${geminiKeys.length} | OpenAI: ${openAIKeys.length} | OpenRouter: ${openRouterKeys.length} | Deepgram: ${deepgramApiKey ? 'כן' : 'לא'}`);
 
     let audioBuffer = null;
     const possiblePaths = [];
@@ -403,7 +404,7 @@ const handleAudioRequest = async (req, res) => {
     const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר"];
     const needsSearch = SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
 
-    // --- Gemini Call ---
+    // --- עדיפות 1: Gemini Call ---
     if (geminiKeys.length > 0) {
       const geminiModels = requestedModel 
         ? [requestedModel, "gemini-2.5-flash-lite", "gemini-2.5-flash"] 
@@ -426,14 +427,14 @@ const handleAudioRequest = async (req, res) => {
       const payload = { contents: geminiContents };
       if (needsSearch) payload.tools = [{ googleSearch: {} }];
 
-      console.log(`🤖 מנסה לשלוח בקשה ל-Gemini (${geminiKeys.length} מפתחות זמינים)...`);
+      console.log(`🤖 [עדיפות 1] מנסה Gemini (${geminiKeys.length} מפתחות)...`);
 
       for (let k = 0; k < geminiKeys.length; k++) {
         if (finalAnswerText) break;
         const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`📡 מנסה מודל ${model} עם מפתח מספר ${k + 1}...`);
+            console.log(`📡 מנסה Gemini ${model} (מפתח ${k + 1})...`);
             const response = await callGeminiSimple(model, payload, apiKey);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
@@ -442,17 +443,50 @@ const handleAudioRequest = async (req, res) => {
               break;
             }
           } catch (err) {
-            console.error(`❌ שגיאה בקריאה ל-Gemini (${model}) מפתח ${k + 1}:`, err.message);
+            console.error(`❌ שגיאה ב-Gemini (${model}):`, err.message);
           }
         }
       }
-    } else {
-      console.log("ℹ️ אין מפתחות Gemini מוגדרים במערכת.");
     }
 
-    // --- Fallback ל-OpenRouter במידה ו-Gemini נכשל או הגיע למכסה ---
+    // --- עדיפות 2: OpenAI Call (במידה ו-Gemini נכשל) ---
+    if (!finalAnswerText && openAIKeys.length > 0) {
+      console.log(`🤖 [עדיפות 2] מנסה OpenAI (${openAIKeys.length} מפתחות)...`);
+      const openAiPayload = {
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemInstruction },
+          ...userSession.history.map(m => ({ role: m.role, content: m.content })),
+          { role: "user", content: transcribedText }
+        ]
+      };
+
+      for (const oaKey of openAIKeys) {
+        if (finalAnswerText) break;
+        try {
+          console.log("📡 שולח בקשה ל-OpenAI (gpt-4o-mini)...");
+          const oaResponse = await axios.post("https://api.openai.com/v1/chat/completions", openAiPayload, {
+            headers: {
+              "Authorization": `Bearer ${oaKey}`,
+              "Content-Type": "application/json"
+            },
+            timeout: 12000
+          });
+          if (oaResponse?.data?.choices?.[0]?.message?.content) {
+            finalAnswerText = oaResponse.data.choices[0].message.content;
+            usedModelName = "openai (gpt-4o-mini)";
+            console.log("✅ הצלחה מול OpenAI!");
+            break;
+          }
+        } catch (oaErr) {
+          console.error("❌ שגיאה בקריאה ל-OpenAI:", oaErr.message);
+        }
+      }
+    }
+
+    // --- עדיפות 3: OpenRouter Call (במידה וגם OpenAI נכשל) ---
     if (!finalAnswerText && openRouterKeys.length > 0) {
-      console.log("🔄 Gemini נכשל או לא זמין. מנסה לבצע Fallback ל-OpenRouter...");
+      console.log(`🤖 [עדיפות 3] מנסה OpenRouter (${openRouterKeys.length} מפתחות)...`);
       const openRouterPayload = {
         model: "google/gemini-2.5-flash",
         messages: [
@@ -486,7 +520,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!finalAnswerText) {
-      console.warn("⚠️ כל המודלים (Gemini ו-OpenRouter) כשלו או הגיעו למכסה.");
+      console.warn("⚠️ כל המודלים (Gemini, OpenAI ו-OpenRouter) כשלו או הגיעו למכסה.");
       finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
       usedModelName = "system-fallback";
     }
