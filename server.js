@@ -177,19 +177,19 @@ const getWarningMessage = (attempts) => {
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
 const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
-// --- פונקציית מענה מתוקנת שמונעת לולאות ---
-function sendYemotTtsResponse(res, text) {
+// --- פונקציית מענה מותאמת לשלוחה קיימת ללא ניתוקים ---
+function sendYemotTtsResponse(res, text, nextFolder = "2") {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
     .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  console.log(`🔊 מחזיר מענה קולי וממתין להקלטה מהמשתמש: "${clean}"`);
+  console.log(`🔊 מחזיר מענה קולי לימות המשיח ומעבר לשלוחה ${nextFolder}: "${clean}"`);
   res.set("Content-Type", "text/plain; charset=utf-8");
   
-  // משמיע את הטקסט וממתין לקלט קולי חדש (מקליט ושומר ב-Transcription/last.wav בלי להיכנס ללולאה אוטומטית)
-  return res.send(`id_list_message=t-${clean}&read=path=Transcription/last.wav&no_root=yes`);
+  // השמעת התשובה ולאחר מכן ניתוב לשלוחת ההמשך המוגדרת
+  return res.send(`id_list_message=t-${clean}&go_to_folder=/${nextFolder}`);
 }
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
@@ -214,16 +214,16 @@ const handleAudioRequest = async (req, res) => {
 
     if (!token) {
       console.error("❌ שגיאה: לא נמצא טוקן (Token) לאימות מול ימות המשיח.");
-      return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר");
+      return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר", "2");
     }
 
     if (!checkRateLimit(userPhone)) {
-      return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר");
+      return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר", "2");
     }
 
     const callId = params.ApiCallId || params.ApiYFCallId;
     const systemDid = params.ApiRealDID || params.ApiDID || "לא ידוע";
-    const secondaryFolder = params.SHL || "1";
+    const secondaryFolder = params.SHL || "2";
     const primaryFolder = params.SHM || "2";
     const requestedModel = params.MODEL || params.model;
 
@@ -232,7 +232,7 @@ const handleAudioRequest = async (req, res) => {
     if (callId && processedCalls.has(callId)) {
       console.log(`🔄 שיחה כפולה זוהתה (CallId: ${callId}), מתעלם.`);
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`go_to_folder=/1`);
+      return res.send(`go_to_folder=/${secondaryFolder}`);
     }
 
     if (callId) {
@@ -242,7 +242,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (bannedPhones.has(userPhone)) {
       console.log(`🚫 משתמש חסום ניסה להתחבר: ${userPhone}`);
-      return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
+      return sendYemotTtsResponse(res, BANNED_USER_RESPONSE, secondaryFolder);
     }
 
     let userSession = conversationHistory.get(userPhone) || { 
@@ -299,15 +299,14 @@ const handleAudioRequest = async (req, res) => {
     console.log(`🔑 מפתחות זוהו במערכת -> Gemini: ${geminiKeys.length} | OpenAI: ${openAIKeys.length} | OpenRouter: ${openRouterKeys.length} | Deepgram: ${deepgramApiKey ? 'כן' : 'לא'}`);
 
     let audioBuffer = null;
-    const possiblePaths = [];
+    const possiblePaths = [
+      "ivr2:/Transcription/last.wav",
+      "ivr2:/1/last.wav",
+      "ivr2:/2/last.wav"
+    ];
 
-    if (params.path) possiblePaths.push(params.path);
-    if (params.Path) possiblePaths.push(params.Path);
-    if (params.file) possiblePaths.push(params.file);
-    if (params.File) possiblePaths.push(params.File);
-    if (params.ApiPath) possiblePaths.push(params.ApiPath);
-    possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
-    possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
+    if (params.path) possiblePaths.unshift(params.path);
+    if (params.file) possiblePaths.unshift(params.file);
 
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
@@ -324,8 +323,8 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!audioBuffer) {
-      console.log("👋 פנייה ראשונית (אין הקלטה). מחזיר ברכת פתיחה וממתין להקלטה.");
-      return sendYemotTtsResponse(res, "היי מה קורה במה אוכל לעזור");
+      console.log("👋 פנייה ראשונית (אין הקלטה). מחזיר ברכת פתיחה.");
+      return sendYemotTtsResponse(res, "היי מה קורה במה אוכל לעזור", secondaryFolder);
     }
 
     let transcribedText = "";
@@ -354,7 +353,7 @@ const handleAudioRequest = async (req, res) => {
     const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
     if (!transcribedText || transcriptionWords.length < 1) {
       console.log("👋 תמלול ריק. מבקש לדבר שוב.");
-      return sendYemotTtsResponse(res, "לא שמעתי אותך טוב אנא דבר שוב");
+      return sendYemotTtsResponse(res, "לא שמעתי אותך טוב אנא דבר שוב", secondaryFolder);
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
@@ -364,12 +363,12 @@ const handleAudioRequest = async (req, res) => {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
+        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE, secondaryFolder);
       }
 
       userSession.lastActive = Date.now();
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
+      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts), secondaryFolder);
     }
 
     if (RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
@@ -380,7 +379,7 @@ const handleAudioRequest = async (req, res) => {
         lastActive: Date.now(),
         blockedAttempts: userSession.blockedAttempts
       });
-      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור");
+      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור", secondaryFolder);
     }
 
     const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -531,10 +530,10 @@ const handleAudioRequest = async (req, res) => {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
+        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE, secondaryFolder);
       }
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
+      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts), secondaryFolder);
     }
 
     logConversationToSupabase(userPhone, transcribedText, finalAnswerText, usedModelName);
@@ -544,11 +543,11 @@ const handleAudioRequest = async (req, res) => {
     if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
     conversationHistory.set(userPhone, userSession);
 
-    return sendYemotTtsResponse(res, finalAnswerText);
+    return sendYemotTtsResponse(res, finalAnswerText, secondaryFolder);
 
   } catch (error) {
     console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
-    return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית");
+    return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית", "2");
   }
 };
 
