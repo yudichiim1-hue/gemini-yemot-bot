@@ -254,7 +254,6 @@ const handleAudioRequest = async (req, res) => {
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
 
-    // זיהוי ישיר של פרמטרים מימות המשיח
     const directGemini = params.GEMINI_API_KEY || params.gemini_key || params.GeminiKey || params.AI_KEY || params.API || params.Api || params.api || params.KEY || params.Key || params.key || params.GEMINI;
     if (directGemini) parsedGeminiKeys.add(String(directGemini).trim());
 
@@ -267,7 +266,6 @@ const handleAudioRequest = async (req, res) => {
     const directDeepgram = params.DEEPGRAM || params.deepgram || params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey;
     if (directDeepgram) parsedDeepgram = String(directDeepgram).trim();
 
-    // חילוץ עמוק לכלל הפרמטרים
     const extractKeysDeeply = (obj, depth = 0) => {
       if (depth > 5 || !obj) return; 
       for (const value of Object.values(obj)) {
@@ -484,11 +482,11 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- עדיפות 3: OpenRouter Call (במידה וגם OpenAI נכשל) ---
+    // --- עדיפות 3: OpenRouter Call (עם הנתב החינמי האוטומטי) ---
     if (!finalAnswerText && openRouterKeys.length > 0) {
-      console.log(`🤖 [עדיפות 3] מנסה OpenRouter (${openRouterKeys.length} מפתחות)...`);
+      console.log(`🤖 [עדיפות 3] מנסה OpenRouter עם הנתב החינמי (${openRouterKeys.length} מפתחות)...`);
       const openRouterPayload = {
-        model: "google/gemini-2.5-flash",
+        model: "openrouter/auto", // משתמש בנתב החינמי והאוטומטי של אופן ראוטר
         messages: [
           { role: "system", content: systemInstruction },
           ...userSession.history.map(m => ({ role: m.role, content: m.content })),
@@ -499,7 +497,7 @@ const handleAudioRequest = async (req, res) => {
       for (const orKey of openRouterKeys) {
         if (finalAnswerText) break;
         try {
-          console.log("📡 שולח בקשה ל-OpenRouter...");
+          console.log("📡 שולח בקשה ל-OpenRouter (openrouter/auto)...");
           const orResponse = await axios.post("https://openrouter.ai/api/v1/chat/completions", openRouterPayload, {
             headers: {
               "Authorization": `Bearer ${orKey}`,
@@ -509,7 +507,7 @@ const handleAudioRequest = async (req, res) => {
           });
           if (orResponse?.data?.choices?.[0]?.message?.content) {
             finalAnswerText = orResponse.data.choices[0].message.content;
-            usedModelName = "openrouter (gemini-2.5-flash)";
+            usedModelName = "openrouter (auto-free)";
             console.log("✅ הצלחה מול OpenRouter!");
             break;
           }
