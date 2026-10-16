@@ -226,6 +226,7 @@ const handleAudioRequest = async (req, res) => {
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
+    const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
 
     const directKeys = [
@@ -237,6 +238,9 @@ const handleAudioRequest = async (req, res) => {
       const val = String(k).trim();
       if (val) parsedGeminiKeys.add(val);
     });
+
+    const explicitOpenRouter = params.OPENROUTER_API_KEY || params.openrouter_key || params.OpenRouterKey;
+    if (explicitOpenRouter) parsedOpenRouterKeys.add(String(explicitOpenRouter).trim());
 
     const explicitDeepgram = params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey;
     if (explicitDeepgram) parsedDeepgram = String(explicitDeepgram).trim();
@@ -250,6 +254,7 @@ const handleAudioRequest = async (req, res) => {
             const parts = item.split(/[\s,;|]+/).map(p => p.trim()).filter(Boolean);
             for (const part of parts) {
               if (part.startsWith("AIza")) parsedGeminiKeys.add(part);
+              else if (part.startsWith("sk-or-")) parsedOpenRouterKeys.add(part);
               else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) parsedDeepgram = part;
             }
           } else if (typeof item === "object" && item !== null) {
@@ -262,6 +267,7 @@ const handleAudioRequest = async (req, res) => {
     extractKeysDeeply(params);
 
     const geminiKeys = Array.from(parsedGeminiKeys);
+    const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
 
     let audioBuffer = null;
@@ -399,6 +405,39 @@ const handleAudioRequest = async (req, res) => {
           } catch (err) {
             console.error(`❌ שגיאה בקריאה ל-Gemini (${model}):`, err.message);
           }
+        }
+      }
+    }
+
+    // --- Fallback ל-OpenRouter במידה ו-Gemini נכשל או הגיע למכסה ---
+    if (!finalAnswerText && openRouterKeys.length > 0) {
+      console.log("🔄 מנסה לבצע Fallback ל-OpenRouter...");
+      const openRouterPayload = {
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: systemInstruction },
+          ...userSession.history.map(m => ({ role: m.role, content: m.content })),
+          { role: "user", content: transcribedText }
+        ]
+      };
+
+      for (const orKey of openRouterKeys) {
+        if (finalAnswerText) break;
+        try {
+          const orResponse = await axios.post("https://openrouter.ai/api/v1/chat/completions", openRouterPayload, {
+            headers: {
+              "Authorization": `Bearer ${orKey}`,
+              "Content-Type": "application/json"
+            },
+            timeout: 12000
+          });
+          if (orResponse?.data?.choices?.[0]?.message?.content) {
+            finalAnswerText = orResponse.data.choices[0].message.content;
+            usedModelName = "openrouter (gemini-2.5-flash)";
+            break;
+          }
+        } catch (orErr) {
+          console.error("❌ שגיאה בקריאה ל-OpenRouter:", orErr.message);
         }
       }
     }
