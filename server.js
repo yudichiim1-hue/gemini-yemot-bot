@@ -177,16 +177,19 @@ const getWarningMessage = (attempts) => {
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
 const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
-function sendYemotTtsResponse(res, text, currentFolder = "1") {
+// --- פונקציית מענה מתוקנת שמונעת לולאות ---
+function sendYemotTtsResponse(res, text) {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
     .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  console.log(`🔊 מחזיר מענה קולי לימות המשיח: "${clean}"`);
+  console.log(`🔊 מחזיר מענה קולי וממתין להקלטה מהמשתמש: "${clean}"`);
   res.set("Content-Type", "text/plain; charset=utf-8");
-  return res.send(`id_list_message=t-${clean}&go_to_folder=/${currentFolder}`);
+  
+  // משמיע את הטקסט וממתין לקלט קולי חדש (מקליט ושומר ב-Transcription/last.wav בלי להיכנס ללולאה אוטומטית)
+  return res.send(`id_list_message=t-${clean}&read=path=Transcription/last.wav&no_root=yes`);
 }
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
@@ -321,8 +324,8 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!audioBuffer) {
-      console.log("👋 פנייה ראשונית (אין הקלטה). מחזיר ברכת פתיחה.");
-      return sendYemotTtsResponse(res, "היי מה קורה במה אוכל לעזור", secondaryFolder);
+      console.log("👋 פנייה ראשונית (אין הקלטה). מחזיר ברכת פתיחה וממתין להקלטה.");
+      return sendYemotTtsResponse(res, "היי מה קורה במה אוכל לעזור");
     }
 
     let transcribedText = "";
@@ -351,7 +354,7 @@ const handleAudioRequest = async (req, res) => {
     const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
     if (!transcribedText || transcriptionWords.length < 1) {
       console.log("👋 תמלול ריק. מבקש לדבר שוב.");
-      return sendYemotTtsResponse(res, "לא שמעתי אותך טוב אנא דבר שוב", secondaryFolder);
+      return sendYemotTtsResponse(res, "לא שמעתי אותך טוב אנא דבר שוב");
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
@@ -361,12 +364,12 @@ const handleAudioRequest = async (req, res) => {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE, secondaryFolder);
+        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
       }
 
       userSession.lastActive = Date.now();
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts), secondaryFolder);
+      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
     }
 
     if (RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
@@ -377,7 +380,7 @@ const handleAudioRequest = async (req, res) => {
         lastActive: Date.now(),
         blockedAttempts: userSession.blockedAttempts
       });
-      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור", secondaryFolder);
+      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור");
     }
 
     const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
@@ -528,10 +531,10 @@ const handleAudioRequest = async (req, res) => {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE, secondaryFolder);
+        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
       }
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts), secondaryFolder);
+      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
     }
 
     logConversationToSupabase(userPhone, transcribedText, finalAnswerText, usedModelName);
@@ -541,11 +544,11 @@ const handleAudioRequest = async (req, res) => {
     if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
     conversationHistory.set(userPhone, userSession);
 
-    return sendYemotTtsResponse(res, finalAnswerText, secondaryFolder);
+    return sendYemotTtsResponse(res, finalAnswerText);
 
   } catch (error) {
     console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
-    return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית", "1");
+    return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית");
   }
 };
 
