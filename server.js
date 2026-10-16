@@ -320,9 +320,10 @@ const handleAudioRequest = async (req, res) => {
       } catch (err) {}
     }
 
+    // --- מענה לבקשה ראשונית ללא הקלטה ---
     if (!audioBuffer) {
-      console.warn("⚠️ לא נמצא קובץ שמע להורדה.");
-      return sendYemotTtsResponse(res, "לא נמצאה הקלטה תקינה אנא הקלט שוב");
+      console.log("👋 לא נמצאה הקלטה תקינה (פנייה ראשונית). מחזיר הודעת פתיחה.");
+      return sendYemotTtsResponse(res, "היי מה קורה");
     }
 
     let transcribedText = "";
@@ -348,11 +349,11 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- בדיקת איכות תמלול ---
+    // --- מענה אם התמלול ריק או לא מובן ---
     const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
-    if (!transcribedText || transcriptionWords.length < 2) {
-      console.log(`⚠️ תמלול חלש או ריק מדי (${transcriptionWords.length} מילים). דורש הקלטה חוזרת.`);
-      return sendYemotTtsResponse(res, "אנא דבר יותר לאט וברור");
+    if (!transcribedText || transcriptionWords.length < 1) {
+      console.log("👋 תמלול ריק. מחזיר הודעת פתיחה.");
+      return sendYemotTtsResponse(res, "היי מה קורה");
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
@@ -392,7 +393,7 @@ const handleAudioRequest = async (req, res) => {
     let finalAnswerText = "";
     let usedModelName = "unknown";
     
-    const basePersonality = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים. תמיד החזר את התשובה עם הצעה למשתמש מה הלאה.";
+    const basePersonality = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. אם נדרשת מילה באנגלית הפרד את האותיות ברווחים.";
     
     const systemInstruction = isDeepRequested
       ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 120 מילים סהכ.`
@@ -447,7 +448,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- עדיפות 2: OpenAI Call (במידה ו-Gemini נכשל) ---
+    // --- עדיפות 2: OpenAI Call ---
     if (!finalAnswerText && openAIKeys.length > 0) {
       console.log(`🤖 [עדיפות 2] מנסה OpenAI (${openAIKeys.length} מפתחות)...`);
       const openAiPayload = {
@@ -486,7 +487,7 @@ const handleAudioRequest = async (req, res) => {
     if (!finalAnswerText && openRouterKeys.length > 0) {
       console.log(`🤖 [עדיפות 3] מנסה OpenRouter עם הנתב החינמי (${openRouterKeys.length} מפתחות)...`);
       const openRouterPayload = {
-        model: "openrouter/auto", // משתמש בנתב החינמי והאוטומטי של אופן ראוטר
+        model: "openrouter/auto",
         messages: [
           { role: "system", content: systemInstruction },
           ...userSession.history.map(m => ({ role: m.role, content: m.content })),
