@@ -348,10 +348,9 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- בדיקת איכות תמלול ---
-    const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
-    if (!transcribedText || transcriptionWords.length < 1) {
-      console.log(`⚠️ תמלול ריק מדי. דורש הקלטה חוזרת.`);
+    // --- בדיקת איכות תמלול מתוקנת (מאפשרת מילה אחת כמו "מה" / "היי") ---
+    if (!transcribedText || transcribedText.length < 1) {
+      console.log(`⚠️ תמלול ריק לחלוטין. דורש הקלטה חוזרת.`);
       return sendYemotTtsResponse(res, "אנא דבר יותר לאט וברור");
     }
 
