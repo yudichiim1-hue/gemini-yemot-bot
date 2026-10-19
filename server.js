@@ -329,9 +329,9 @@ const handleAudioRequest = async (req, res) => {
 
     if (deepgramApiKey) {
       try {
-        console.log("🎙️ שולח קובץ שמע לתמלול ב-Deepgram...");
+        console.log("🎙️ שולח קובץ שמע לתמלול ב-Deepgram (עם זיהוי שפה אוטומטי)...");
         const dgResponse = await axios.post(
-          "https://api.deepgram.com/v1/listen?language=he&model=nova-3",
+          "https://api.deepgram.com/v1/listen?detect_language=true&model=nova-3",
           audioBuffer,
           {
             headers: {
@@ -350,8 +350,8 @@ const handleAudioRequest = async (req, res) => {
 
     // --- בדיקת איכות תמלול ---
     const transcriptionWords = transcribedText.split(/\s+/).filter(Boolean);
-    if (!transcribedText || transcriptionWords.length < 2) {
-      console.log(`⚠️ תמלול חלש או ריק מדי (${transcriptionWords.length} מילים). דורש הקלטה חוזרת.`);
+    if (!transcribedText || transcriptionWords.length < 1) {
+      console.log(`⚠️ תמלול ריק מדי. דורש הקלטה חוזרת.`);
       return sendYemotTtsResponse(res, "אנא דבר יותר לאט וברור");
     }
 
