@@ -162,6 +162,14 @@ const DEEP_DETAILS_TRIGGERS = [
   "תפרט", "תפרטי", "עוד מידע", "פירוט", "מידע מפורט"
 ].map(normalizeText);
 
+const SWITCH_TO_ENGLISH_TRIGGERS = [
+  "עבור לאנגלית", "דבר אנגלית", "אנגלית", "switch to english", "english please", "speak english"
+].map(normalizeText);
+
+const SWITCH_TO_HEBREW_TRIGGERS = [
+  "עבור לעברית", "דבר עברית", "עברית", "switch to hebrew", "hebrew please", "speak hebrew"
+].map(normalizeText);
+
 const BLOCKED_KEYWORDS = [
   "סקס", "פורנו", "עירום", "זונה", "שרמוטה", "אונס",
   "זין", "כוס", "מזדיין", "להזדיין", "זיון", "מציצה",
@@ -246,7 +254,8 @@ const handleAudioRequest = async (req, res) => {
       history: [], 
       timer: null, 
       lastActive: Date.now(),
-      blockedAttempts: 0 
+      blockedAttempts: 0,
+      language: "he" // ברירת מחדל: עברית
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
@@ -329,9 +338,10 @@ const handleAudioRequest = async (req, res) => {
 
     if (deepgramApiKey) {
       try {
-        console.log("🎙️ שולח קובץ שמע לתמלול ב-Deepgram (עם זיהוי שפה אוטומטי)...");
+        const currentLang = userSession.language || "he";
+        console.log(`🎙️ שולח קובץ שמע לתמלול ב-Deepgram (שפה נוכחית: ${currentLang})...`);
         const dgResponse = await axios.post(
-          "https://api.deepgram.com/v1/listen?detect_language=true&model=nova-3",
+          `https://api.deepgram.com/v1/listen?language=${currentLang}&model=nova-3&smart_format=true`,
           audioBuffer,
           {
             headers: {
@@ -348,13 +358,27 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- בדיקת איכות תמלול מתוקנת (מאפשרת מילה אחת כמו "מה" / "היי") ---
     if (!transcribedText || transcribedText.length < 1) {
       console.log(`⚠️ תמלול ריק לחלוטין. דורש הקלטה חוזרת.`);
-      return sendYemotTtsResponse(res, "אנא דבר יותר לאט וברור");
+      return sendYemotTtsResponse(res, userSession.language === "en" ? "Please speak clearly" : "אנא דבר יותר לאט וברור");
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
+
+    // --- זיהוי בקשת מעבר שפה ---
+    if (SWITCH_TO_ENGLISH_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
+      console.log(`🌐 משתמש ${userPhone} ביקש לעבור לאנגלית.`);
+      userSession.language = "en";
+      conversationHistory.set(userPhone, userSession);
+      return sendYemotTtsResponse(res, "Switched to English. How can I help you?");
+    }
+
+    if (SWITCH_TO_HEBREW_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
+      console.log(`🌐 משתמש ${userPhone} ביקש לעבור לעברית.`);
+      userSession.language = "he";
+      conversationHistory.set(userPhone, userSession);
+      return sendYemotTtsResponse(res, "עברנו חזרה לעברית במה אוכל לעזור");
+    }
 
     if (BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword))) {
       console.warn(`⚠️ זיהו מילה חסומה בתמלול של המשתמש: ${userPhone}`);
@@ -375,7 +399,8 @@ const handleAudioRequest = async (req, res) => {
         history: [],
         timer: null,
         lastActive: Date.now(),
-        blockedAttempts: userSession.blockedAttempts
+        blockedAttempts: userSession.blockedAttempts,
+        language: "he"
       });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור");
     }
@@ -391,14 +416,17 @@ const handleAudioRequest = async (req, res) => {
     let finalAnswerText = "";
     let usedModelName = "unknown";
     
-    const basePersonality = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. בסוף כל תשובה סיים בשאלת המשך קצרה ורלוונטית שקשורה ישירות לנושא השיחה.";
-    
+    const basePersonalityHebrew = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. בסוף כל תשובה סיים בשאלת המשך קצרה ורלוונטית שקשורה ישירות לנושא השיחה.";
+    const basePersonalityEnglish = "You are a helpful voice assistant connected to the internet. Always answer factually and accurately using web search when needed. Never use punctuation marks. Always end every response with a short relevant follow up question related to the topic.";
+
+    const selectedBasePersonality = userSession.language === "en" ? basePersonalityEnglish : basePersonalityHebrew;
+
     const systemInstruction = isDeepRequested
-      ? `${basePersonality} המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 130 מילים סהכ.`
-      : `${basePersonality} ענה בציטוט קצר ותמציתי עד 45 מילים בלבד.`;
+      ? `${selectedBasePersonality} ${userSession.language === "en" ? "Elaborate in up to 130 words." : "המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 130 מילים סהכ."}`
+      : `${selectedBasePersonality} ${userSession.language === "en" ? "Answer concisely in up to 45 words." : "ענה בציטוט קצר ותמציתי עד 45 מילים בלבד."}`;
 
     const lowerTranscription = transcribedText.toLowerCase();
-    const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר"];
+    const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר", "search", "news", "today", "who", "what", "where", "when", "how"];
     const needsSearch = SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
 
     // --- עדיפות 1: Gemini Call ---
@@ -409,7 +437,7 @@ const handleAudioRequest = async (req, res) => {
 
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "מבין עונה לפי ההנחיות והערכים הנדרשים." }] }
+        { role: "model", parts: [{ text: "Understood. Responding according to guidelines." }] }
       ];
 
       userSession.history.forEach((msg) => {
@@ -481,9 +509,9 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- עדיפות 3: OpenRouter Call (עם הנתב החינמי האוטומטי) ---
+    // --- עדיפות 3: OpenRouter Call ---
     if (!finalAnswerText && openRouterKeys.length > 0) {
-      console.log(`🤖 [עדיפות 3] מנסה OpenRouter עם הנתב החינמי (${openRouterKeys.length} מפתחות)...`);
+      console.log(`🤖 [עדיפות 3] מנסה OpenRouter...`);
       const openRouterPayload = {
         model: "openrouter/auto",
         messages: [
@@ -496,7 +524,7 @@ const handleAudioRequest = async (req, res) => {
       for (const orKey of openRouterKeys) {
         if (finalAnswerText) break;
         try {
-          console.log("📡 שולח בקשה ל-OpenRouter (openrouter/auto)...");
+          console.log("📡 שולח בקשה ל-OpenRouter...");
           const orResponse = await axios.post("https://openrouter.ai/api/v1/chat/completions", openRouterPayload, {
             headers: {
               "Authorization": `Bearer ${orKey}`,
@@ -517,8 +545,8 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!finalAnswerText) {
-      console.warn("⚠️ כל המודלים (Gemini, OpenAI ו-OpenRouter) כשלו או הגיעו למכסה.");
-      finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
+      console.warn("⚠️ כל המודלים כשלו או הגיעו למכסה.");
+      finalAnswerText = userSession.language === "en" ? "Daily limit reached please try again later" : "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
       usedModelName = "system-fallback";
     }
 
