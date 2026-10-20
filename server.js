@@ -147,9 +147,10 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       }
     }
 
-    console.log(`🎵 מוריד שיר דרך API חיצוני עבור: ${videoUrl}`);
+    console.log(`🎵 מוריד שיר באמצעות שירות ישיר עבור: ${videoUrl}`);
 
-    const apiDownloadUrl = `https://p.oceansaver.in/ajax/download.php?button=1&url=${encodeURIComponent(videoUrl)}&format=mp3`;
+    // שימוש בשירות y2mate / api חלופי ישיר שאינו חסום ע"י DNS ב-Render
+    const apiDownloadUrl = `https://loader.to/ajax/download.php?url=${encodeURIComponent(videoUrl)}&format=mp3`;
     
     const response = await axios.get(apiDownloadUrl, {
       headers: {
@@ -165,9 +166,9 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
     const downloadId = response.data.id;
     let audioStreamUrl = null;
 
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 15; i++) {
       await new Promise(resolve => setTimeout(resolve, 3000));
-      const progressRes = await axios.get(`https://p.oceansaver.in/ajax/progress.php?id=${downloadId}`, {
+      const progressRes = await axios.get(`https://loader.to/ajax/progress.php?id=${downloadId}`, {
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
         timeout: 10000
       });
