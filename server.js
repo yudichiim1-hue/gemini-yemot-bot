@@ -1,6 +1,5 @@
 const express = require("express");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
-const ytDlp = require("yt-dlp-exec");
 const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
@@ -135,54 +134,58 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
 
 async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") {
   const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
-  let cookieFilePath = null;
 
   try {
-    let downloadTarget = targetInput;
+    let videoUrl = targetInput;
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
-      downloadTarget = `ytsearch1:${targetInput}`;
+      videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
     } else {
       const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
       if (match && match[1]) {
-        downloadTarget = `https://www.youtube.com/watch?v=${match[1]}`;
+        videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
         console.log(`📌 חולץ מזהה סרטון סידורי: ${match[1]}`);
       }
     }
 
-    console.log(`🎵 מוריד שיר מיוטיוב באמצעות yt-dlp עבור: ${downloadTarget}`);
+    console.log(`🎵 מוריד שיר באמצעות API חיצוני (Cobalt) עבור: ${videoUrl}`);
 
-    const args = [
-      downloadTarget,
-      "-x",
-      "--audio-format", "mp3",
-      "--audio-quality", "0",
-      "--output", tempFilePath,
-      "--no-check-certificates",
-      "--geo-bypass",
-      "--extractor-args", "youtube:player_client=android",
-      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    ];
+    const response = await axios.post("https://api.cobalt.tools/", {
+      url: videoUrl,
+      audioFormat: "mp3",
+      isAudioOnly: true
+    }, {
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      },
+      timeout: 25000
+    });
 
-    if (process.env.YOUTUBE_COOKIES) {
-      cookieFilePath = path.join(__dirname, `cookies_${Date.now()}.txt`);
-      fs.writeFileSync(cookieFilePath, process.env.YOUTUBE_COOKIES, "utf8");
-      args.push("--cookies", cookieFilePath);
-      console.log("🍪 קובץ Cookies צורף בהצלחה להורדה.");
+    const downloadDirectUrl = response.data?.url || response.data?.stream;
+
+    if (!downloadDirectUrl) {
+      throw new Error("השירות החיצוני לא החזיר קישור הורדה תקין.");
     }
 
-    await ytDlp(args);
+    console.log("📥 מוריד את קובץ ה-MP3 לשרת מקישור ה-Stream...");
 
-    if (cookieFilePath && fs.existsSync(cookieFilePath)) {
-      fs.unlinkSync(cookieFilePath);
-    }
+    const audioFileRes = await axios.get(downloadDirectUrl, { 
+      responseType: "stream",
+      timeout: 30000 
+    });
 
-    if (!fs.existsSync(tempFilePath)) {
-      throw new Error("קובץ השמע לא נוצר פיזית בשרת.");
-    }
+    const writer = fs.createWriteStream(tempFilePath);
+    audioFileRes.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+    });
 
     const stats = fs.statSync(tempFilePath);
     if (stats.size < 100 * 1024) {
-      throw new Error("הקובץ שהורד קטן מדי.");
+      throw new Error("הקובץ שהורד קטן מדי או פגום.");
     }
 
     console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
@@ -203,7 +206,6 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
     return true;
   } catch (err) {
     console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
-    if (cookieFilePath && fs.existsSync(cookieFilePath)) fs.unlinkSync(cookieFilePath);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return false;
   }
