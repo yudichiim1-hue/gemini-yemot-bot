@@ -1,5 +1,6 @@
 const express = require("express");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
+const ytDlp = require("yt-dlp-exec");
 const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
@@ -134,58 +135,54 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
 
 async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") {
   const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
+  let cookieFilePath = null;
 
   try {
-    let videoUrl = targetInput;
+    let downloadTarget = targetInput;
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
-      videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
+      downloadTarget = `ytsearch1:${targetInput}`;
     } else {
       const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
       if (match && match[1]) {
-        videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
+        downloadTarget = `https://www.youtube.com/watch?v=${match[1]}`;
         console.log(`📌 חולץ מזהה סרטון סידורי: ${match[1]}`);
       }
     }
 
-    console.log(`🎵 מוריד שיר דרך API חלופי עבור: ${videoUrl}`);
+    console.log(`🎵 מוריד שיר מיוטיוב באמצעות yt-dlp עבור: ${downloadTarget}`);
 
-    const apiDownloadUrl = `https://api.vkrabbat.workers.dev/dl?url=${encodeURIComponent(videoUrl)}`;
-    
-    const response = await axios.get(apiDownloadUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-      },
-      timeout: 25000
-    });
+    const options = {
+      extractAudio: true,
+      audioFormat: "mp3",
+      output: tempFilePath,
+      noCheckCertificates: true,
+      geoBypass: true,
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    };
 
-    let audioStreamUrl = response.data?.url || response.data?.audio || response.data?.download;
-
-    if (!audioStreamUrl && response.data && typeof response.data === 'string') {
-      audioStreamUrl = response.data;
+    // טעינת קובץ קוקיז מתוך משתנה הסביבה ב-Render במידה וקיים
+    if (process.env.YOUTUBE_COOKIES) {
+      cookieFilePath = path.join(__dirname, `cookies_${Date.now()}.txt`);
+      fs.writeFileSync(cookieFilePath, process.env.YOUTUBE_COOKIES, "utf8");
+      options.cookiefile = cookieFilePath;
+      console.log("🍪 טעון קובץ Cookies זמני עבור אימות מול יוטיוב.");
+    } else {
+      console.warn("⚠️ אזהרה: משתנה הסביבה YOUTUBE_COOKIES אינו מוגדר.");
     }
 
-    if (!audioStreamUrl) {
-      throw new Error("השירות החיצוני לא החזיר קישור הורדה תקין.");
+    await ytDlp(downloadTarget, options);
+
+    if (cookieFilePath && fs.existsSync(cookieFilePath)) {
+      fs.unlinkSync(cookieFilePath);
     }
 
-    console.log("📥 מוריד את קובץ ה-MP3 לשרת...");
-
-    const audioFileRes = await axios.get(audioStreamUrl, { 
-      responseType: "stream",
-      timeout: 30000 
-    });
-
-    const writer = fs.createWriteStream(tempFilePath);
-    audioFileRes.data.pipe(writer);
-
-    await new Promise((resolve, reject) => {
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
+    if (!fs.existsSync(tempFilePath)) {
+      throw new Error("קובץ השמע לא נוצר פיזית בשרת.");
+    }
 
     const stats = fs.statSync(tempFilePath);
     if (stats.size < 200 * 1024) {
-      throw new Error("הקובץ שהורד קטן מדי או שגוי.");
+      throw new Error("הקובץ שהורד קטן מדי.");
     }
 
     console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
@@ -206,6 +203,7 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
     return true;
   } catch (err) {
     console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
+    if (cookieFilePath && fs.existsSync(cookieFilePath)) fs.unlinkSync(cookieFilePath);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return false;
   }
