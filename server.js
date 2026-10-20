@@ -1,6 +1,5 @@
 const express = require("express");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
-const ytDlp = require("yt-dlp-exec");
 const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
@@ -135,42 +134,51 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
 
 async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") {
   const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
-  let cookieFilePath = null;
 
   try {
-    let downloadTarget = targetInput;
+    let videoUrl = targetInput;
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
-      downloadTarget = `ytsearch1:${targetInput}`;
+      videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
     }
 
-    console.log(`🎵 מתחיל תהליך הורדה מיוטיוב עבור: ${downloadTarget}`);
+    console.log(`🎵 שולח בקשת הורדה לשירות החיצוני עבור: ${videoUrl}`);
 
-    const options = {
-      extractAudio: true,
-      audioFormat: "mp3",
-      output: tempFilePath,
-      noCheckCertificates: true,
-      geoBypass: true,
-      preferFreeFormats: true,
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    };
+    const apiDownloadUrl = `https://co.wuk.sh/api/json`;
+    const response = await axios.post(apiDownloadUrl, {
+      url: videoUrl,
+      isAudioOnly: true,
+      audioFormat: "mp3"
+    }, {
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      },
+      timeout: 25000
+    });
 
-    if (process.env.YOUTUBE_COOKIES) {
-      cookieFilePath = path.join(__dirname, `cookies_${Date.now()}.txt`);
-      fs.writeFileSync(cookieFilePath, process.env.YOUTUBE_COOKIES, "utf8");
-      options.cookiefile = cookieFilePath;
-      console.log("🍪 טעון קובץ Cookies זמני עבור יוטיוב.");
+    if (!response.data || !response.data.url) {
+      throw new Error("השירות החיצוני לא הצליח להחזיר קישור להורדת השמע.");
     }
 
-    const result = await ytDlp(downloadTarget, options);
-    console.log("📥 תוצאת yt-dlp:", result?.stdout || "הורדה הסתיימה");
+    const audioStreamUrl = response.data.url;
+    console.log("📥 מוריד את קובץ ה-MP3 לשרת...");
 
-    if (cookieFilePath && fs.existsSync(cookieFilePath)) {
-      fs.unlinkSync(cookieFilePath);
-    }
+    const audioFileRes = await axios.get(audioStreamUrl, { 
+      responseType: "stream",
+      timeout: 30000 
+    });
+
+    const writer = fs.createWriteStream(tempFilePath);
+    audioFileRes.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+    });
 
     if (!fs.existsSync(tempFilePath)) {
-      throw new Error("קובץ השמע לא נוצר פיזית בשרת לאחר ריצת yt-dlp.");
+      throw new Error("קובץ השמע לא נוצר פיזית בשרת.");
     }
 
     console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
@@ -192,8 +200,7 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
     console.log("✅ השיר הועלה בהצלחה לשלוחה!");
     return true;
   } catch (err) {
-    console.error("❌ שגיאה מפורטת בהורדה או בהעלאת השיר:", err.message, err.stderr || "");
-    if (cookieFilePath && fs.existsSync(cookieFilePath)) fs.unlinkSync(cookieFilePath);
+    console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return false;
   }
@@ -581,7 +588,7 @@ const handleAudioRequest = async (req, res) => {
 app.all("/", handleAudioRequest);
 app.all("/process-audio", handleAudioRequest);
 
-const PORT = process.env.PORT || 10000;
+The PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
