@@ -137,47 +137,42 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
   try {
     let videoUrl = targetInput;
-    let videoId = "";
-
-    const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
-    if (match && match[1]) {
-      videoId = match[1];
-      videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      console.log(`📌 חולץ מזהה סרטון סידורי: ${videoId}`);
-    } else if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
+    if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
       videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
+    } else {
+      const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
+      if (match && match[1]) {
+        videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
+        console.log(`📌 חולץ מזהה סרטון סידורי: ${match[1]}`);
+      }
     }
 
-    console.log(`🎵 מתחיל הורדת שמע עבור: ${videoUrl}`);
+    console.log(`🎵 מוריד שיר דרך API חלופי עבור: ${videoUrl}`);
 
-    // שימוש ב-API אמין של Cobalt להורדה ישירה ללא הפניות
-    const cobaltRes = await axios.post("https://api.cobalt.tools/api/json", {
-      url: videoUrl,
-      downloadMode: "audio",
-      audioFormat: "mp3"
-    }, {
+    const apiDownloadUrl = `https://api.vkrabbat.workers.dev/dl?url=${encodeURIComponent(videoUrl)}`;
+    
+    const response = await axios.get(apiDownloadUrl, {
       headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       },
       timeout: 25000
     });
 
-    let downloadDirectUrl = cobaltRes.data?.url;
+    let audioStreamUrl = response.data?.url || response.data?.audio || response.data?.download;
 
-    if (!downloadDirectUrl) {
-      throw new Error("שירות Cobalt לא החזיר קישור הורדה תקין.");
+    if (!audioStreamUrl && response.data && typeof response.data === 'string') {
+      audioStreamUrl = response.data;
     }
 
-    console.log("📥 מוריד את קובץ השמע מקישור ה-Stream הישיר...");
+    if (!audioStreamUrl) {
+      throw new Error("השירות החיצוני לא החזיר קישור הורדה תקין.");
+    }
 
-    const audioFileRes = await axios.get(downloadDirectUrl, { 
+    console.log("📥 מוריד את קובץ ה-MP3 לשרת...");
+
+    const audioFileRes = await axios.get(audioStreamUrl, { 
       responseType: "stream",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-      },
-      timeout: 40000 
+      timeout: 30000 
     });
 
     const writer = fs.createWriteStream(tempFilePath);
@@ -188,13 +183,9 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       writer.on("error", reject);
     });
 
-    // וידוא תקינות: בדיקת גודל הקובץ הנוצר בשרת
     const stats = fs.statSync(tempFilePath);
-    const fileSizeInBytes = stats.size;
-    console.log(`📏 גודל הקובץ שהורד: ${(fileSizeInBytes / 1024).toFixed(2)} KB`);
-
-    if (fileSizeInBytes < 200 * 1024) { // פחות מ-200KB פירושו קובץ טקסט/שגיאה
-      throw new Error(`קובץ השמע שהורד קטן מדי (${(fileSizeInBytes / 1024).toFixed(2)} KB), כנראה מדובר בעמוד שגיאה.`);
+    if (stats.size < 200 * 1024) {
+      throw new Error("הקובץ שהורד קטן מדי או שגוי.");
     }
 
     console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
@@ -204,12 +195,10 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
 
-    const uploadRes = await axios.post(uploadUrl, form, {
+    await axios.post(uploadUrl, form, {
       headers: form.getHeaders(),
       timeout: 30000
     });
-
-    console.log("📤 תשובת העלאה מימות המשיח:", uploadRes.data);
 
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
 
