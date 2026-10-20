@@ -138,11 +138,10 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
   try {
     let videoUrl = targetInput;
     
-    // אם התקבל טקסט חופשי (שם של שיר), נחפש אותו ביוטיוב
+    // זיהוי האם התקבל טקסט חופשי או קישור, וחילוץ מזהה הסרטון הסידורי (Video ID) אם קיים
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
       videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
     } else {
-      // חילוץ המזהה הסידורי (Video ID) מתוך הקישור כדי לעבוד מולו ישירות
       const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
       if (match && match[1]) {
         const videoId = match[1];
@@ -151,41 +150,26 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       }
     }
 
-    console.log(`🎵 מוריד שיר עבור: ${videoUrl}`);
+    console.log(`🎵 שולח בקשת הורדה עבור: ${videoUrl}`);
 
-    const apiDownloadUrl = `https://p.oceansaver.in/ajax/download.php?button=1&url=${encodeURIComponent(videoUrl)}&format=mp3`;
-    
-    const response = await axios.get(apiDownloadUrl, {
+    const response = await axios.post("https://co.wuk.sh/api/json", {
+      url: videoUrl,
+      isAudioOnly: true,
+      audioFormat: "mp3"
+    }, {
       headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       },
-      timeout: 20000
+      timeout: 25000
     });
 
-    if (!response.data || !response.data.success || !response.data.id) {
-      throw new Error("השירות החיצוני לא החזיר מזהה הורדה תקין.");
+    if (!response.data || !response.data.url) {
+      throw new Error("השירות החיצוני לא הצליח להחזיר קישור הורדה.");
     }
 
-    const downloadId = response.data.id;
-    let audioStreamUrl = null;
-
-    for (let i = 0; i < 12; i++) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      const progressRes = await axios.get(`https://p.oceansaver.in/ajax/progress.php?id=${downloadId}`, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-        timeout: 10000
-      });
-      
-      if (progressRes.data && progressRes.data.success && progressRes.data.download_url) {
-        audioStreamUrl = progressRes.data.download_url;
-        break;
-      }
-    }
-
-    if (!audioStreamUrl) {
-      throw new Error("פג הזמן הממתין להשלמת הורדת הקובץ מהשירות החיצוני.");
-    }
-
+    const audioStreamUrl = response.data.url;
     console.log("📥 מוריד את קובץ ה-MP3 לשרת...");
 
     const audioFileRes = await axios.get(audioStreamUrl, { 
@@ -212,12 +196,10 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
 
-    const uploadRes = await axios.post(uploadUrl, form, {
+    await axios.post(uploadUrl, form, {
       headers: form.getHeaders(),
       timeout: 30000
     });
-
-    console.log("📤 תשובת העלאה מימות המשיח:", uploadRes.data);
 
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
 
