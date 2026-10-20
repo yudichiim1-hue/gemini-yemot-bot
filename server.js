@@ -137,39 +137,51 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
   try {
     let videoUrl = targetInput;
-    
-    // זיהוי האם התקבל טקסט חופשי או קישור, וחילוץ מזהה הסרטון הסידורי (Video ID) אם קיים
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
       videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
     } else {
       const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
       if (match && match[1]) {
-        const videoId = match[1];
-        videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-        console.log(`📌 חולץ מזהה סרטון סידורי: ${videoId}`);
+        videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
+        console.log(`📌 חולץ מזהה סרטון סידורי: ${match[1]}`);
       }
     }
 
-    console.log(`🎵 שולח בקשת הורדה עבור: ${videoUrl}`);
+    console.log(`🎵 מוריד שיר דרך API חיצוני עבור: ${videoUrl}`);
 
-    const response = await axios.post("https://co.wuk.sh/api/json", {
-      url: videoUrl,
-      isAudioOnly: true,
-      audioFormat: "mp3"
-    }, {
+    const apiDownloadUrl = `https://p.oceansaver.in/ajax/download.php?button=1&url=${encodeURIComponent(videoUrl)}&format=mp3`;
+    
+    const response = await axios.get(apiDownloadUrl, {
       headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       },
-      timeout: 25000
+      timeout: 20000
     });
 
-    if (!response.data || !response.data.url) {
-      throw new Error("השירות החיצוני לא הצליח להחזיר קישור הורדה.");
+    if (!response.data || !response.data.success || !response.data.id) {
+      throw new Error("השירות החיצוני לא החזיר מזהה הורדה תקין.");
     }
 
-    const audioStreamUrl = response.data.url;
+    const downloadId = response.data.id;
+    let audioStreamUrl = null;
+
+    for (let i = 0; i < 12; i++) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      const progressRes = await axios.get(`https://p.oceansaver.in/ajax/progress.php?id=${downloadId}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        timeout: 10000
+      });
+      
+      if (progressRes.data && progressRes.data.success && progressRes.data.download_url) {
+        audioStreamUrl = progressRes.data.download_url;
+        break;
+      }
+    }
+
+    if (!audioStreamUrl) {
+      throw new Error("פג הזמן הממתין להשלמת הורדת הקובץ מהשירות החיצוני.");
+    }
+
     console.log("📥 מוריד את קובץ ה-MP3 לשרת...");
 
     const audioFileRes = await axios.get(audioStreamUrl, { 
