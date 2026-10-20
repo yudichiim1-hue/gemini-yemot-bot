@@ -151,26 +151,24 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
     console.log(`🎵 מוריד שיר מיוטיוב באמצעות yt-dlp עבור: ${downloadTarget}`);
 
-    const options = {
-      extractAudio: true,
-      audioFormat: "mp3",
-      output: tempFilePath,
-      noCheckCertificates: true,
-      geoBypass: true,
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    };
+    const args = [
+      downloadTarget,
+      "--extract-audio",
+      "--audio-format", "mp3",
+      "--output", tempFilePath,
+      "--no-check-certificates",
+      "--geo-bypass",
+      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    ];
 
-    // טעינת קובץ קוקיז מתוך משתנה הסביבה ב-Render במידה וקיים
     if (process.env.YOUTUBE_COOKIES) {
       cookieFilePath = path.join(__dirname, `cookies_${Date.now()}.txt`);
       fs.writeFileSync(cookieFilePath, process.env.YOUTUBE_COOKIES, "utf8");
-      options.cookiefile = cookieFilePath;
-      console.log("🍪 טעון קובץ Cookies זמני עבור אימות מול יוטיוב.");
-    } else {
-      console.warn("⚠️ אזהרה: משתנה הסביבה YOUTUBE_COOKIES אינו מוגדר.");
+      args.push("--cookies", cookieFilePath);
+      console.log("🍪 קובץ Cookies צורף בהצלחה להורדה.");
     }
 
-    await ytDlp(downloadTarget, options);
+    await ytDlp(args);
 
     if (cookieFilePath && fs.existsSync(cookieFilePath)) {
       fs.unlinkSync(cookieFilePath);
