@@ -1,6 +1,10 @@
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
+const ytDlp = require("yt-dlp-exec");
+const fs = require("fs");
+const path = require("path");
+const FormData = require("form-data");
 
 const app = express();
 
@@ -69,6 +73,46 @@ async function logConversationToSupabase(phone, question, answer, modelName) {
     }
   } catch (err) {
     console.error("❌ שגיאה חריגה ברישום השיחה ל-Supabase:", err.message);
+  }
+}
+
+// פונקציה להורדת שיר מיוטיוב והעלאתו לימות המשיח (לשלוחה 3)
+async function downloadAndUploadToYemot(songQuery, token, targetFolder = "3") {
+  const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
+  try {
+    console.log(`🎵 מחפש ומוריד שיר מיוטיוב: "${songQuery}"...`);
+
+    await ytDlp(`ytsearch1:${songQuery}`, {
+      extractAudio: true,
+      audioFormat: "mp3",
+      output: tempFilePath,
+      noCheckCertificates: true
+    });
+
+    if (!fs.existsSync(tempFilePath)) {
+      throw new Error("קובץ השמע לא נוצר בשרת.");
+    }
+
+    console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
+
+    const form = new FormData();
+    form.append("file", fs.createReadStream(tempFilePath));
+
+    const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
+
+    const uploadRes = await axios.post(uploadUrl, form, {
+      headers: form.getHeaders(),
+      timeout: 30000
+    });
+
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+
+    console.log("✅ השיר הועלה בהצלחה לשלוחה!");
+    return true;
+  } catch (err) {
+    console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    return false;
   }
 }
 
@@ -185,16 +229,16 @@ const getWarningMessage = (attempts) => {
 const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
 const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
 
-function sendYemotTtsResponse(res, text) {
+function sendYemotTtsResponse(res, text, nextFolder = "1") {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
     .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  console.log(`🔊 מחזיר מענה קולי לימות המשיח: "${clean}"`);
+  console.log(`🔊 מחזיר מענה קולי לימות המשיח (שלוחה /${nextFolder}): "${clean}"`);
   res.set("Content-Type", "text/plain; charset=utf-8");
-  return res.send(`id_list_message=t-${clean}&go_to_folder=/1`);
+  return res.send(`id_list_message=t-${clean}&go_to_folder=/${nextFolder}`);
 }
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
@@ -255,7 +299,7 @@ const handleAudioRequest = async (req, res) => {
       timer: null, 
       lastActive: Date.now(),
       blockedAttempts: 0,
-      language: "he" // ברירת מחדל: עברית
+      language: "he"
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
@@ -416,8 +460,8 @@ const handleAudioRequest = async (req, res) => {
     let finalAnswerText = "";
     let usedModelName = "unknown";
     
-    const basePersonalityHebrew = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל: אם המשתמש שואל שאלה בעלת אופי מיני בוטה שוביניסטי או תוכן לא ראוי ענה אך ורק במילים המפתחים שלי הגדירו לי שאסור לי לענות על זה. לעולם אל תשתמש בסימני פיסוק. בסוף כל תשובה סיים בשאלת המשך קצרה ורלוונטית שקשורה ישירות לנושא השיחה.";
-    const basePersonalityEnglish = "You are a helpful voice assistant connected to the internet. Always answer factually and accurately using web search when needed. Never use punctuation marks. Always end every response with a short relevant follow up question related to the topic.";
+    const basePersonalityHebrew = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל חשוב: אם המשתמש מבקש לשמוע שיר להוריד שיר או להשמיע מוזיקה ענה אך ורק בפורמט: PLAY_SONG: [שם השיר] (לדוגמה: PLAY_SONG: חנן בן ארי אלוף העולם). בכל מקרה אחר: ענה רגיל וללא סימני פיסוק ובסוף כל תשובה סיים בשאלת המשך קצרה. אם השאלה לא ראויה ענה אך ורק: המפתחים שלי הגדירו לי שאסור לי לענות על זה.";
+    const basePersonalityEnglish = "You are a helpful voice assistant connected to the internet. Always answer factually and accurately using web search when needed. If the user asks to play or download a song, reply ONLY with: PLAY_SONG: [song name]. Never use punctuation marks. Always end every response with a short relevant follow up question.";
 
     const selectedBasePersonality = userSession.language === "en" ? basePersonalityEnglish : basePersonalityHebrew;
 
@@ -474,7 +518,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- עדיפות 2: OpenAI Call (במידה ו-Gemini נכשל) ---
+    // --- עדיפות 2: OpenAI Call ---
     if (!finalAnswerText && openAIKeys.length > 0) {
       console.log(`🤖 [עדיפות 2] מנסה OpenAI (${openAIKeys.length} מפתחות)...`);
       const openAiPayload = {
@@ -548,6 +592,21 @@ const handleAudioRequest = async (req, res) => {
       console.warn("⚠️ כל המודלים כשלו או הגיעו למכסה.");
       finalAnswerText = userSession.language === "en" ? "Daily limit reached please try again later" : "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
       usedModelName = "system-fallback";
+    }
+
+    // --- בדיקת בקשת נגינת שיר מיוטיוב ---
+    if (finalAnswerText.includes("PLAY_SONG:")) {
+      const songQuery = finalAnswerText.split("PLAY_SONG:")[1].trim();
+      console.log(`🎵 ה-AI זיהה בקשת שיר: "${songQuery}". מתחיל הורדה והעלאה לשלוחה /3...`);
+
+      const success = await downloadAndUploadToYemot(songQuery, token, "3");
+
+      if (success) {
+        logConversationToSupabase(userPhone, transcribedText, `[הורד שיר לשלוחה 3: ${songQuery}]`, usedModelName);
+        return sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3");
+      } else {
+        return sendYemotTtsResponse(res, "מצטער לא הצלחתי להוריד את השיר מיוטיוב אנא נסה שוב");
+      }
     }
 
     const normalizedAnswer = normalizeText(finalAnswerText);
