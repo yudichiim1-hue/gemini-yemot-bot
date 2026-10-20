@@ -143,7 +143,7 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       downloadTarget = `ytsearch1:${targetInput}`;
     }
 
-    console.log(`🎵 מוריד שיר מיוטיוב (יעד: ${downloadTarget})...`);
+    console.log(`🎵 מתחיל תהליך הורדה מיוטיוב עבור: ${downloadTarget}`);
 
     const options = {
       extractAudio: true,
@@ -151,6 +151,7 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       output: tempFilePath,
       noCheckCertificates: true,
       geoBypass: true,
+      preferFreeFormats: true,
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     };
 
@@ -161,14 +162,15 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       console.log("🍪 טעון קובץ Cookies זמני עבור יוטיוב.");
     }
 
-    await ytDlp(downloadTarget, options);
+    const result = await ytDlp(downloadTarget, options);
+    console.log("📥 תוצאת yt-dlp:", result?.stdout || "הורדה הסתיימה");
 
     if (cookieFilePath && fs.existsSync(cookieFilePath)) {
       fs.unlinkSync(cookieFilePath);
     }
 
     if (!fs.existsSync(tempFilePath)) {
-      throw new Error("קובץ השמע לא נוצר בשרת.");
+      throw new Error("קובץ השמע לא נוצר פיזית בשרת לאחר ריצת yt-dlp.");
     }
 
     console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
@@ -178,17 +180,19 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
 
-    await axios.post(uploadUrl, form, {
+    const uploadRes = await axios.post(uploadUrl, form, {
       headers: form.getHeaders(),
       timeout: 30000
     });
+
+    console.log("📤 תשובת העלאה מימות המשיח:", uploadRes.data);
 
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
 
     console.log("✅ השיר הועלה בהצלחה לשלוחה!");
     return true;
   } catch (err) {
-    console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
+    console.error("❌ שגיאה מפורטת בהורדה או בהעלאת השיר:", err.message, err.stderr || "");
     if (cookieFilePath && fs.existsSync(cookieFilePath)) fs.unlinkSync(cookieFilePath);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return false;
