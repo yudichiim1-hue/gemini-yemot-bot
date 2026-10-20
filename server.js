@@ -1,5 +1,4 @@
 const express = require("express");
-const { createClient } = require("@supabase/supabase-js");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 const ytDlp = require("yt-dlp-exec");
 const fs = require("fs");
@@ -11,117 +10,13 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
-// --- אתחול Supabase ---
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-
 const bannedPhones = new Set();
-
-// טעינת מספרים חסומים מ-Supabase
-async function loadBannedPhones() {
-  try {
-    console.log("🔍 מנסה לטעון מספרים חסומים מ-Supabase...");
-    const { data, error } = await supabase
-      .from('bot_storage')
-      .select('value')
-      .eq('key', 'banned_phones')
-      .single();
-    
-    if (error) {
-      if (error.code === 'PGRST116') {
-        console.log("ℹ️ מפתח המספרים החסומים טרם קיים בטבלה. ממשיך רגיל.");
-        return;
-      }
-      console.error("❌ שגיאת Supabase בטעינת מספרים חסומים:", error.message);
-      return;
-    }
-
-    if (data && Array.isArray(data.value)) {
-      data.value.forEach(phone => bannedPhones.add(String(phone).trim()));
-      console.log(`🔒 נטענו בהצלחה ${bannedPhones.size} מספרים חסומים מ-Supabase.`);
-    }
-  } catch (err) {
-    console.error("❌ שגיאה חריגה בטעינת מספרים חסומים:", err.message);
-  }
-}
-
-// שמירת מספרים חסומים ל-Supabase
-async function saveBannedPhones() {
-  try {
-    const phonesArray = Array.from(bannedPhones);
-    console.log(`💾 שומר ${phonesArray.length} מספרים חסומים ל-Supabase...`);
-    const { error } = await supabase
-      .from('bot_storage')
-      .upsert({ key: 'banned_phones', value: phonesArray });
-      
-    if (error) throw error;
-    console.log("💾 מספרים חסומים נשמרו בהצלחה ב-Supabase.");
-  } catch (err) {
-    console.error("❌ שגיאה בשמירת מספרים חסומים:", err.message);
-  }
-}
-
-// פונקציית שמירת שיחה לטבלת היסטוריה ב-Supabase
-async function logConversationToSupabase(phone, question, answer, modelName) {
-  try {
-    const payload = { phone, question, answer, model: modelName };
-    console.log("📝 רושם שיחה ל-Supabase:", payload);
-    const { error } = await supabase.from('conversation_logs').insert([payload]);
-    if (error) {
-      console.error("❌ שגיאה ברישום השיחה ל-Supabase:", error.message);
-    } else {
-      console.log("✅ השיחה נרשמה בהצלחה ב-Supabase.");
-    }
-  } catch (err) {
-    console.error("❌ שגיאה חריגה ברישום השיחה ל-Supabase:", err.message);
-  }
-}
-
-// פונקציה להורדת שיר מיוטיוב והעלאתו לימות המשיח (לשלוחה 3)
-async function downloadAndUploadToYemot(songQuery, token, targetFolder = "3") {
-  const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
-  try {
-    console.log(`🎵 מחפש ומוריד שיר מיוטיוב: "${songQuery}"...`);
-
-    await ytDlp(`ytsearch1:${songQuery}`, {
-      extractAudio: true,
-      audioFormat: "mp3",
-      output: tempFilePath,
-      noCheckCertificates: true
-    });
-
-    if (!fs.existsSync(tempFilePath)) {
-      throw new Error("קובץ השמע לא נוצר בשרת.");
-    }
-
-    console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
-
-    const form = new FormData();
-    form.append("file", fs.createReadStream(tempFilePath));
-
-    const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
-
-    const uploadRes = await axios.post(uploadUrl, form, {
-      headers: form.getHeaders(),
-      timeout: 30000
-    });
-
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-
-    console.log("✅ השיר הועלה בהצלחה לשלוחה!");
-    return true;
-  } catch (err) {
-    console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    return false;
-  }
-}
 
 if (process.env.INITIAL_BANNED_PHONES) {
   try {
     const parsedBanned = JSON.parse(process.env.INITIAL_BANNED_PHONES);
     if (Array.isArray(parsedBanned)) {
       parsedBanned.forEach((phone) => bannedPhones.add(String(phone).trim()));
-      saveBannedPhones();
       console.log(`🔒 סונכרנו ${bannedPhones.size} מספרים חסומים ממשתני הסביבה.`);
     }
   } catch (err) {
@@ -149,25 +44,14 @@ const checkRateLimit = (phone) => {
   return true;
 };
 
-const blockUserPermanently = async (phone) => {
+const blockUserPermanently = (phone) => {
   console.log(`🚨 חוסם לצמיתות את המספר: ${phone}`);
   bannedPhones.add(phone);
-  await saveBannedPhones();
-
   if (conversationHistory.has(phone)) {
     const session = conversationHistory.get(phone);
     if (session.timer) clearTimeout(session.timer);
     conversationHistory.delete(phone);
   }
-};
-
-const unblockUser = async (phone) => {
-  const existed = bannedPhones.delete(phone);
-  if (existed) {
-    console.log(`🔓 מסיר חסימה מהמספר: ${phone}`);
-    await saveBannedPhones();
-  }
-  return existed;
 };
 
 setInterval(() => {
@@ -248,6 +132,45 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
     timeout: 12000 
   });
 };
+
+async function downloadAndUploadToYemot(songQuery, token, targetFolder = "3") {
+  const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
+  try {
+    console.log(`🎵 מחפש ומוריד שיר מיוטיוב: "${songQuery}"...`);
+
+    await ytDlp(`ytsearch1:${songQuery}`, {
+      extractAudio: true,
+      audioFormat: "mp3",
+      output: tempFilePath,
+      noCheckCertificates: true
+    });
+
+    if (!fs.existsSync(tempFilePath)) {
+      throw new Error("קובץ השמע לא נוצר בשרת.");
+    }
+
+    console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
+
+    const form = new FormData();
+    form.append("file", fs.createReadStream(tempFilePath));
+
+    const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
+
+    await axios.post(uploadUrl, form, {
+      headers: form.getHeaders(),
+      timeout: 30000
+    });
+
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+
+    console.log("✅ השיר הועלה בהצלחה לשלוחה!");
+    return true;
+  } catch (err) {
+    console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    return false;
+  }
+}
 
 const handleAudioRequest = async (req, res) => {
   try {
@@ -409,7 +332,6 @@ const handleAudioRequest = async (req, res) => {
 
     const normalizedTranscription = normalizeText(transcribedText);
 
-    // --- זיהוי בקשת מעבר שפה ---
     if (SWITCH_TO_ENGLISH_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
       console.log(`🌐 משתמש ${userPhone} ביקש לעבור לאנגלית.`);
       userSession.language = "en";
@@ -428,7 +350,7 @@ const handleAudioRequest = async (req, res) => {
       console.warn(`⚠️ זיהו מילה חסומה בתמלול של המשתמש: ${userPhone}`);
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
-        await blockUserPermanently(userPhone);
+        blockUserPermanently(userPhone);
         return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
       }
 
@@ -594,7 +516,6 @@ const handleAudioRequest = async (req, res) => {
       usedModelName = "system-fallback";
     }
 
-    // --- בדיקת בקשת נגינת שיר מיוטיוב ---
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songQuery = finalAnswerText.split("PLAY_SONG:")[1].trim();
       console.log(`🎵 ה-AI זיהה בקשת שיר: "${songQuery}". מתחיל הורדה והעלאה לשלוחה /3...`);
@@ -602,7 +523,6 @@ const handleAudioRequest = async (req, res) => {
       const success = await downloadAndUploadToYemot(songQuery, token, "3");
 
       if (success) {
-        logConversationToSupabase(userPhone, transcribedText, `[הורד שיר לשלוחה 3: ${songQuery}]`, usedModelName);
         return sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3");
       } else {
         return sendYemotTtsResponse(res, "מצטער לא הצלחתי להוריד את השיר מיוטיוב אנא נסה שוב");
@@ -614,14 +534,12 @@ const handleAudioRequest = async (req, res) => {
       console.warn(`⚠️ תשובת המודל הכילה חסימה עבור משתמש ${userPhone}`);
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
-        await blockUserPermanently(userPhone);
+        blockUserPermanently(userPhone);
         return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
       }
       conversationHistory.set(userPhone, userSession);
       return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
     }
-
-    logConversationToSupabase(userPhone, transcribedText, finalAnswerText, usedModelName);
 
     userSession.history.push({ role: "user", content: transcribedText });
     userSession.history.push({ role: "assistant", content: finalAnswerText });
@@ -639,9 +557,7 @@ const handleAudioRequest = async (req, res) => {
 app.all("/", handleAudioRequest);
 app.all("/process-audio", handleAudioRequest);
 
-loadBannedPhones().then(() => {
-  const PORT = process.env.PORT || 10000;
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
