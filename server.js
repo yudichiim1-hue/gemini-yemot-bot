@@ -158,7 +158,7 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       "--output", tempFilePath,
       "--no-check-certificates",
       "--geo-bypass",
-      "--extractor-args", "youtube:player_client=android,web",
+      "--extractor-args", "youtube:player_client=tv_embedded,web",
       "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     ];
 
@@ -226,7 +226,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!checkRateLimit(userPhone)) {
-      return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר");
+      return sendYemotTtsResponse(res, "חרגת ממספר הפניות المותר בדקה נסה שוב מאוחר יותר");
     }
 
     const callId = params.ApiCallId || params.ApiYFCallId;
