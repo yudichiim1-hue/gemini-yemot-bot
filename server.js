@@ -588,7 +588,7 @@ const handleAudioRequest = async (req, res) => {
 app.all("/", handleAudioRequest);
 app.all("/process-audio", handleAudioRequest);
 
-The PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
