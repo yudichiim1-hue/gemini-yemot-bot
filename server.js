@@ -153,12 +153,13 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
     const args = [
       downloadTarget,
-      "--extract-audio",
+      "-x",
       "--audio-format", "mp3",
+      "--audio-quality", "0",
       "--output", tempFilePath,
       "--no-check-certificates",
       "--geo-bypass",
-      "--extractor-args", "youtube:player_client=tv_embedded,web",
+      "--extractor-args", "youtube:player_client=android",
       "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     ];
 
@@ -180,7 +181,7 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
     }
 
     const stats = fs.statSync(tempFilePath);
-    if (stats.size < 200 * 1024) {
+    if (stats.size < 100 * 1024) {
       throw new Error("הקובץ שהורד קטן מדי.");
     }
 
@@ -226,7 +227,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!checkRateLimit(userPhone)) {
-      return sendYemotTtsResponse(res, "חרגת ממספר הפניות المותר בדקה נסה שוב מאוחר יותר");
+      return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר");
     }
 
     const callId = params.ApiCallId || params.ApiYFCallId;
