@@ -395,7 +395,6 @@ const handleAudioRequest = async (req, res) => {
     const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר", "search", "news", "today", "who", "what", "where", "when", "how"];
     const needsSearch = SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
 
-    // --- עדיפות 1: Gemini Call ---
     if (geminiKeys.length > 0) {
       const geminiModels = requestedModel 
         ? [requestedModel, "gemini-2.5-flash-lite", "gemini-2.5-flash"] 
@@ -440,7 +439,6 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- עדיפות 2: OpenAI Call ---
     if (!finalAnswerText && openAIKeys.length > 0) {
       console.log(`🤖 [עדיפות 2] מנסה OpenAI (${openAIKeys.length} מפתחות)...`);
       const openAiPayload = {
@@ -475,7 +473,6 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // --- עדיפות 3: OpenRouter Call ---
     if (!finalAnswerText && openRouterKeys.length > 0) {
       console.log(`🤖 [עדיפות 3] מנסה OpenRouter...`);
       const openRouterPayload = {
