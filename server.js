@@ -137,13 +137,22 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
   try {
     let videoUrl = targetInput;
+    
+    // אם התקבל טקסט חופשי (שם של שיר), נחפש אותו ביוטיוב
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
       videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
+    } else {
+      // חילוץ המזהה הסידורי (Video ID) מתוך הקישור כדי לעבוד מולו ישירות
+      const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
+      if (match && match[1]) {
+        const videoId = match[1];
+        videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        console.log(`📌 חולץ מזהה סרטון סידורי: ${videoId}`);
+      }
     }
 
-    console.log(`🎵 מוריד שיר דרך API חיצוני עבור: ${videoUrl}`);
+    console.log(`🎵 מוריד שיר עבור: ${videoUrl}`);
 
-    // שימוש בשירות המרה ציבורי ואמין
     const apiDownloadUrl = `https://p.oceansaver.in/ajax/download.php?button=1&url=${encodeURIComponent(videoUrl)}&format=mp3`;
     
     const response = await axios.get(apiDownloadUrl, {
@@ -160,8 +169,7 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
     const downloadId = response.data.id;
     let audioStreamUrl = null;
 
-    // לופ קצר להמתנה עד שההמרה תסתיים בשירות החיצוני
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 12; i++) {
       await new Promise(resolve => setTimeout(resolve, 3000));
       const progressRes = await axios.get(`https://p.oceansaver.in/ajax/progress.php?id=${downloadId}`, {
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
