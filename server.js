@@ -137,57 +137,47 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
   try {
     let videoUrl = targetInput;
-    if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
+    let videoId = "";
+
+    const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
+    if (match && match[1]) {
+      videoId = match[1];
+      videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      console.log(`📌 חולץ מזהה סרטון סידורי: ${videoId}`);
+    } else if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
       videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
-    } else {
-      const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
-      if (match && match[1]) {
-        videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
-        console.log(`📌 חולץ מזהה סרטון סידורי: ${match[1]}`);
-      }
     }
 
-    console.log(`🎵 מוריד שיר באמצעות שירות ישיר עבור: ${videoUrl}`);
+    console.log(`🎵 מתחיל הורדת שמע עבור: ${videoUrl}`);
 
-    // שימוש בשירות y2mate / api חלופי ישיר שאינו חסום ע"י DNS ב-Render
-    const apiDownloadUrl = `https://loader.to/ajax/download.php?url=${encodeURIComponent(videoUrl)}&format=mp3`;
-    
-    const response = await axios.get(apiDownloadUrl, {
+    // שימוש ב-API אמין של Cobalt להורדה ישירה ללא הפניות
+    const cobaltRes = await axios.post("https://api.cobalt.tools/api/json", {
+      url: videoUrl,
+      downloadMode: "audio",
+      audioFormat: "mp3"
+    }, {
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      },
+      timeout: 25000
+    });
+
+    let downloadDirectUrl = cobaltRes.data?.url;
+
+    if (!downloadDirectUrl) {
+      throw new Error("שירות Cobalt לא החזיר קישור הורדה תקין.");
+    }
+
+    console.log("📥 מוריד את קובץ השמע מקישור ה-Stream הישיר...");
+
+    const audioFileRes = await axios.get(downloadDirectUrl, { 
+      responseType: "stream",
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       },
-      timeout: 20000
-    });
-
-    if (!response.data || !response.data.success || !response.data.id) {
-      throw new Error("השירות החיצוני לא החזיר מזהה הורדה תקין.");
-    }
-
-    const downloadId = response.data.id;
-    let audioStreamUrl = null;
-
-    for (let i = 0; i < 15; i++) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      const progressRes = await axios.get(`https://loader.to/ajax/progress.php?id=${downloadId}`, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-        timeout: 10000
-      });
-      
-      if (progressRes.data && progressRes.data.success && progressRes.data.download_url) {
-        audioStreamUrl = progressRes.data.download_url;
-        break;
-      }
-    }
-
-    if (!audioStreamUrl) {
-      throw new Error("פג הזמן הממתין להשלמת הורדת הקובץ מהשירות החיצוני.");
-    }
-
-    console.log("📥 מוריד את קובץ ה-MP3 לשרת...");
-
-    const audioFileRes = await axios.get(audioStreamUrl, { 
-      responseType: "stream",
-      timeout: 30000 
+      timeout: 40000 
     });
 
     const writer = fs.createWriteStream(tempFilePath);
@@ -198,8 +188,13 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       writer.on("error", reject);
     });
 
-    if (!fs.existsSync(tempFilePath)) {
-      throw new Error("קובץ השמע לא נוצר פיזית בשרת.");
+    // וידוא תקינות: בדיקת גודל הקובץ הנוצר בשרת
+    const stats = fs.statSync(tempFilePath);
+    const fileSizeInBytes = stats.size;
+    console.log(`📏 גודל הקובץ שהורד: ${(fileSizeInBytes / 1024).toFixed(2)} KB`);
+
+    if (fileSizeInBytes < 200 * 1024) { // פחות מ-200KB פירושו קובץ טקסט/שגיאה
+      throw new Error(`קובץ השמע שהורד קטן מדי (${(fileSizeInBytes / 1024).toFixed(2)} KB), כנראה מדובר בעמוד שגיאה.`);
     }
 
     console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
@@ -209,10 +204,12 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
 
-    await axios.post(uploadUrl, form, {
+    const uploadRes = await axios.post(uploadUrl, form, {
       headers: form.getHeaders(),
       timeout: 30000
     });
+
+    console.log("📤 תשובת העלאה מימות המשיח:", uploadRes.data);
 
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
 
