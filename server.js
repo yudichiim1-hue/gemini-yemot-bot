@@ -139,7 +139,6 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 
   try {
     let downloadTarget = targetInput;
-    // אם מה שהתקבל הוא לא לינק ישיר, נבצע חיפוש עם ytsearch1
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
       downloadTarget = `ytsearch1:${targetInput}`;
     }
@@ -152,15 +151,14 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       output: tempFilePath,
       noCheckCertificates: true,
       geoBypass: true,
-      useragent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     };
 
-    // תמיכה ב-Cookies אם מוגדר כמשתנה סביבה
     if (process.env.YOUTUBE_COOKIES) {
       cookieFilePath = path.join(__dirname, `cookies_${Date.now()}.txt`);
       fs.writeFileSync(cookieFilePath, process.env.YOUTUBE_COOKIES, "utf8");
       options.cookiefile = cookieFilePath;
-      console.legacy ? null : console.log("🍪 טעון קובץ Cookies זמני עבור יוטיוב.");
+      console.log("🍪 טעון קובץ Cookies זמני עבור יוטיוב.");
     }
 
     await ytDlp(downloadTarget, options);
