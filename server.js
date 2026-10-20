@@ -133,19 +133,41 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
   });
 };
 
-async function downloadAndUploadToYemot(songQuery, token, targetFolder = "3") {
+async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") {
   const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
-  try {
-    console.log(`🎵 מחפש ומוריד שיר מיוטיוב: "${songQuery}"...`);
+  let cookieFilePath = null;
 
-    await ytDlp(`ytsearch1:${songQuery}`, {
+  try {
+    let downloadTarget = targetInput;
+    // אם מה שהתקבל הוא לא לינק ישיר, נבצע חיפוש עם ytsearch1
+    if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
+      downloadTarget = `ytsearch1:${targetInput}`;
+    }
+
+    console.log(`🎵 מוריד שיר מיוטיוב (יעד: ${downloadTarget})...`);
+
+    const options = {
       extractAudio: true,
       audioFormat: "mp3",
       output: tempFilePath,
       noCheckCertificates: true,
       geoBypass: true,
-      useragent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    });
+      useragent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    };
+
+    // תמיכה ב-Cookies אם מוגדר כמשתנה סביבה
+    if (process.env.YOUTUBE_COOKIES) {
+      cookieFilePath = path.join(__dirname, `cookies_${Date.now()}.txt`);
+      fs.writeFileSync(cookieFilePath, process.env.YOUTUBE_COOKIES, "utf8");
+      options.cookiefile = cookieFilePath;
+      console.legacy ? null : console.log("🍪 טעון קובץ Cookies זמני עבור יוטיוב.");
+    }
+
+    await ytDlp(downloadTarget, options);
+
+    if (cookieFilePath && fs.existsSync(cookieFilePath)) {
+      fs.unlinkSync(cookieFilePath);
+    }
 
     if (!fs.existsSync(tempFilePath)) {
       throw new Error("קובץ השמע לא נוצר בשרת.");
@@ -169,6 +191,7 @@ async function downloadAndUploadToYemot(songQuery, token, targetFolder = "3") {
     return true;
   } catch (err) {
     console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
+    if (cookieFilePath && fs.existsSync(cookieFilePath)) fs.unlinkSync(cookieFilePath);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return false;
   }
@@ -384,8 +407,8 @@ const handleAudioRequest = async (req, res) => {
     let finalAnswerText = "";
     let usedModelName = "unknown";
     
-    const basePersonalityHebrew = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל חשוב: אם המשתמש מבקש לשמוע שיר להוריד שיר או להשמיע מוזיקה ענה אך ורק בפורמט: PLAY_SONG: [שם השיר] (לדוגמה: PLAY_SONG: חנן בן ארי אלוף העולם). בכל מקרה אחר: ענה רגיל וללא סימני פיסוק ובסוף כל תשובה סיים בשאלת המשך קצרה. אם השאלה לא ראויה ענה אך ורק: המפתחים שלי הגדירו לי שאסור לי לענות על זה.";
-    const basePersonalityEnglish = "You are a helpful voice assistant connected to the internet. Always answer factually and accurately using web search when needed. If the user asks to play or download a song, reply ONLY with: PLAY_SONG: [song name]. Never use punctuation marks. Always end every response with a short relevant follow up question.";
+    const basePersonalityHebrew = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל חשוב: אם המשתמש מבקש לשמוע שיר להוריד שיר או להשמיע מוזיקה, חפש באמצעות כלי החיפוש את השיר ביוטיוב והחזר אך ורק את הקישור הישיר אליו בפורמט: PLAY_SONG: [קישור יוטיוב מלא]. בכל מקרה אחר: ענה רגיל וללא סימני פיסוק ובסוף כל תשובה סיים בשאלת המשך קצרה. אם השאלה לא ראויה ענה אך ורק: המפתחים שלי הגדירו לי שאסור לי לענות על זה.";
+    const basePersonalityEnglish = "You are a helpful voice assistant connected to the internet. Always answer factually and accurately using web search when needed. If the user asks to play or download a song, search for it and reply ONLY with the direct YouTube URL in format: PLAY_SONG: [full youtube url]. Never use punctuation marks. Always end every response with a short relevant follow up question.";
 
     const selectedBasePersonality = userSession.language === "en" ? basePersonalityEnglish : basePersonalityHebrew;
 
@@ -394,7 +417,7 @@ const handleAudioRequest = async (req, res) => {
       : `${selectedBasePersonality} ${userSession.language === "en" ? "Answer concisely in up to 45 words." : "ענה בציטוט קצר ותמציתי עד 45 מילים בלבד."}`;
 
     const lowerTranscription = transcribedText.toLowerCase();
-    const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר", "search", "news", "today", "who", "what", "where", "when", "how"];
+    const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר", "שיר", "להשמיע", "להוריד", "נגן", "search", "news", "today", "who", "what", "where", "when", "how", "song", "play", "music"];
     const needsSearch = SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
 
     if (geminiKeys.length > 0) {
@@ -516,10 +539,10 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (finalAnswerText.includes("PLAY_SONG:")) {
-      const songQuery = finalAnswerText.split("PLAY_SONG:")[1].trim();
-      console.log(`🎵 ה-AI זיהה בקשת שיר: "${songQuery}". מתחיל הורדה והעלאה לשלוחה /3...`);
+      const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
+      console.log(`🎵 ה-AI זיהה בקשת שיר (יעד: "${songTarget}"). מתחיל הורדה והעלאה לשלוחה /3...`);
 
-      const success = await downloadAndUploadToYemot(songQuery, token, "3");
+      const success = await downloadAndUploadToYemot(songTarget, token, "3");
 
       if (success) {
         return sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3");
