@@ -261,7 +261,8 @@ const handleAudioRequest = async (req, res) => {
       timer: null, 
       lastActive: Date.now(),
       blockedAttempts: 0,
-      language: "he"
+      language: "he",
+      persona: "עוזר קולי רגיל"
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
@@ -385,6 +386,15 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotTtsResponse(res, "עברנו חזרה לעברית במה אוכל לעזור");
     }
 
+    // זיהוי שינוי פרסונה/דמות תוך כדי שיחה
+    const personaMatch = transcribedText.match(/(?:תתנהג כמו|מעכשיו אתה|תדבר כמו)\s+(.+)/i);
+    if (personaMatch && personaMatch[1]) {
+      userSession.persona = personaMatch[1].trim();
+      conversationHistory.set(userPhone, userSession);
+      console.log(`🎭 תפקיד/פרסונת המשתמש עודכנה ל: ${userSession.persona}`);
+      return sendYemotTtsResponse(res, `הבנתי מעכשיו אעבוד בתור ${userSession.persona} תוך שמירה על כל הכללים`);
+    }
+
     if (BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword))) {
       console.warn(`⚠️ זיהו מילה חסומה בתמלול של המשתמש: ${userPhone}`);
       userSession.blockedAttempts += 1;
@@ -405,7 +415,8 @@ const handleAudioRequest = async (req, res) => {
         timer: null,
         lastActive: Date.now(),
         blockedAttempts: userSession.blockedAttempts,
-        language: "he"
+        language: "he",
+        persona: "עוזר קולי רגיל"
       });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור");
     }
@@ -421,14 +432,27 @@ const handleAudioRequest = async (req, res) => {
     let finalAnswerText = "";
     let usedModelName = "unknown";
     
-    const basePersonalityHebrew = "אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. כאשר שואלים אותך מה חדש חדשות אירועים שאלות עובדתיות או בקשות חיפוש השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט או שאתה לא יכול לחפש בזמן אמת. כלל ברזל חשוב: אם המשתמש מבקש לשמוע שיר להוריד שיר או להשמיע מוזיקה, חפש באמצעות כלי החיפוש את השיר ביוטיוב והחזר אך ורק את הקישור הישיר אליו בפורמט: PLAY_SONG: [קישור יוטיוב מלא]. בכל מקרה אחר: ענה רגיל וללא סימני פיסוק ובסוף כל תשובה סיים בשאלת המשך קצרה. אם השאלה לא ראויה ענה אך ורק: המפתחים שלי הגדירו לי שאסור לי לענות על זה.";
-    const basePersonalityEnglish = "You are a helpful voice assistant connected to the internet. Always answer factually and accurately using web search when needed. If the user asks to play or download a song, search for it and reply ONLY with the direct YouTube URL in format: PLAY_SONG: [full youtube url]. Never use punctuation marks. Always end every response with a short relevant follow up question.";
+    const currentPersona = userSession.persona || "עוזר קולי רגיל";
+
+    const basePersonalityHebrew = `אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. סגנון הדיבור או הדמות הנוכחית שלך הם: "${currentPersona}".
+שים לב היטב לחוקי הברזל הבאים שלא מששתנים לעולם, תחת שום דמות:
+1. לעולם אל תשתמש בסימני פיסוק (בלי נקודות, פסיקים, מרכאות או סימני שאלה) כי הטקסט מוקקרא קולית.
+2. אם המשתמש מבקש לשמוע שיר, להוריד שיר או לנגן מוזיקה, חפש באמצעות כלי החיפוש ביוטיוב והחזר אך ורק את הקישור הישיר אליו במבנה: PLAY_SONG: [קישור יוטיוב מלא].
+3. כאשר שואלים על חדשות, מידע או עובדות, השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט.
+4. בסוף כל תשובה סיים בשאלת המשך קצרה.
+5. אם השאלה פוגענית ענה אך ורק: המפתחים שלי הגדירו לי שאסור לי לענות על זה.`;
+
+    const basePersonalityEnglish = `You are a helpful voice assistant connected to the internet. Your current persona/style is: "${currentPersona}". 
+Strict iron rules:
+1. Never use punctuation marks.
+2. If the user asks for a song, reply ONLY with: PLAY_SONG: [full youtube url].
+3. Always end every response with a short relevant follow up question.`;
 
     const selectedBasePersonality = userSession.language === "en" ? basePersonalityEnglish : basePersonalityHebrew;
 
     const systemInstruction = isDeepRequested
       ? `${selectedBasePersonality} ${userSession.language === "en" ? "Elaborate in up to 130 words." : "המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 130 מילים סהכ."}`
-      : `${selectedBasePersonality} ${userSession.language === "en" ? "Answer concisely in up to 45 words." : "ענה בציטוט קצר ותמציתי עד 45 מילים בלבד."}`;
+      : `${selectedBasePersonality} ${userSession.language === "en" ? "Answer concisely in up to 45 words." : "ענה בקצרה ותמציתיות עד 45 מילים בלבד."}`;
 
     const lowerTranscription = transcribedText.toLowerCase();
     const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר", "שיר", "להשמיע", "להוריד", "נגן", "search", "news", "today", "who", "what", "where", "when", "how", "song", "play", "music"];
