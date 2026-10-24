@@ -386,13 +386,13 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotTtsResponse(res, "עברנו חזרה לעברית במה אוכל לעזור");
     }
 
-    // זיהוי שינוי פרסונה/דמות תוך כדי שיחה
-    const personaMatch = transcribedText.match(/(?:תתנהג כמו|מעכשיו אתה|תדבר כמו)\s+(.+)/i);
-    if (personaMatch && personaMatch[1]) {
-      userSession.persona = personaMatch[1].trim();
+    // זיהוי גמיש לשינוי דמות/פרסונה תוך כדי שיחה
+    const normalizedLow = normalizedTranscription;
+    if (normalizedLow.includes("תתנהג כמו") || normalizedLow.includes("מעכשיו אתה") || normalizedLow.includes("דבר כמו") || normalizedLow.includes("תדבר כמו") || normalizedLow.includes("תהיה")) {
+      userSession.persona = transcribedText;
       conversationHistory.set(userPhone, userSession);
       console.log(`🎭 תפקיד/פרסונת המשתמש עודכנה ל: ${userSession.persona}`);
-      return sendYemotTtsResponse(res, `הבנתי מעכשיו אעבוד בתור ${userSession.persona} תוך שמירה על כל הכללים`);
+      return sendYemotTtsResponse(res, userSession.language === "en" ? "Got it. Changing persona" : `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`);
     }
 
     if (BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword))) {
@@ -435,8 +435,8 @@ const handleAudioRequest = async (req, res) => {
     const currentPersona = userSession.persona || "עוזר קולי רגיל";
 
     const basePersonalityHebrew = `אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. סגנון הדיבור או הדמות הנוכחית שלך הם: "${currentPersona}".
-שים לב היטב לחוקי הברזל הבאים שלא מששתנים לעולם, תחת שום דמות:
-1. לעולם אל תשתמש בסימני פיסוק (בלי נקודות, פסיקים, מרכאות או סימני שאלה) כי הטקסט מוקקרא קולית.
+שים לב היטב לחוקי הברזל הבאים שלא משתנים לעולם, תחת שום דמות:
+1. לעולם אל תשתמש בסימני פיסוק (בלי נקודות, פסיקים, מרכאות או סימני שאלה) כי הטקסט מוקרא קולית.
 2. אם המשתמש מבקש לשמוע שיר, להוריד שיר או לנגן מוזיקה, חפש באמצעות כלי החיפוש ביוטיוב והחזר אך ורק את הקישור הישיר אליו במבנה: PLAY_SONG: [קישור יוטיוב מלא].
 3. כאשר שואלים על חדשות, מידע או עובדות, השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט.
 4. בסוף כל תשובה סיים בשאלת המשך קצרה.
