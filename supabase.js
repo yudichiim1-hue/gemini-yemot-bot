@@ -13,8 +13,8 @@ const getSupabaseHeaders = () => ({
   "Prefer": "return=minimal"
 });
 
-// 1. פונקציית שמירת שיחה לטבלה conversation_logs (כולל שם משתמש)
-async function logConversation(phone, question, answer, model, userName) {
+// 1. שמירת שיחה (כולל שם ועיר)
+async function logConversation(phone, question, answer, model, userName, userCity) {
   if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return;
   try {
     await axios.post(`${SUPABASE_URL}/rest/v1/conversation_logs`, {
@@ -22,92 +22,74 @@ async function logConversation(phone, question, answer, model, userName) {
       question,
       answer,
       model: model || "unknown",
-      user_name: userName || null
+      user_name: userName || null,
+      user_city: userCity || null
     }, {
       headers: getSupabaseHeaders(),
       timeout: 5000
     });
-    console.log(`💾 השיחה נשמרה בהצלחה ב-Supabase עבור מספר: ${phone}`);
-  } catch (err) {
-    console.error("❌ שגיאה בשמירת שיחה ל-Supabase:", err.message);
-  }
+  } catch (err) {}
 }
 
-// 2. פונקציית שליפת השיחה האחרונה מאותו היום
+// 2. שליפת השיחה האחרונה להיום
 async function getLatestConversationForToday(phone) {
   if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return null;
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const isoToday = todayStart.toISOString();
-
-    const queryUrl = `${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${isoToday}&order=id.desc&limit=1`;
-    
-    const response = await axios.get(queryUrl, {
-      headers: {
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`
-      },
+    const response = await axios.get(`${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.desc&limit=1`, {
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
       timeout: 5000
     });
-
-    if (response.data && response.data.length > 0) {
-      return response.data[0];
-    }
-    return null;
+    return response.data?.[0] || null;
   } catch (err) {
-    console.error("❌ שגיאה בשליפת שיחה מ-Supabase:", err.message);
     return null;
   }
 }
 
-// 3. פונקציית שליפת כל השיחות מאותו היום (עבור סיכום ופרופיל משתמש)
+// 3. שליפת כל השיחות להיום
 async function getAllConversationsForToday(phone) {
   if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return [];
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const isoToday = todayStart.toISOString();
-
-    const queryUrl = `${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${isoToday}&order=id.asc`;
-    
-    const response = await axios.get(queryUrl, {
-      headers: {
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`
-      },
+    const response = await axios.get(`${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.asc`, {
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
       timeout: 5000
     });
-
     return response.data || [];
   } catch (err) {
-    console.error("❌ שגיאה בשליפת כל השיחות מ-Supabase:", err.message);
     return [];
   }
 }
 
-// 4. פונקציית שליפת השם האחרון שהמשתמש הגדיר היום
+// 4. שליפת שם משתמש מעודכן
 async function getLatestUserNameForToday(phone) {
   if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return null;
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const isoToday = todayStart.toISOString();
-
-    const queryUrl = `${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${isoToday}&user_name=not.is.null&order=id.desc&limit=1`;
-    
-    const response = await axios.get(queryUrl, {
-      headers: {
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`
-      },
+    const response = await axios.get(`${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_name=not.is.null&order=id.desc&limit=1`, {
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
       timeout: 5000
     });
-
-    if (response.data && response.data.length > 0) {
-      return response.data[0].user_name;
-    }
+    return response.data?.[0]?.user_name || null;
+  } catch (err) {
     return null;
+  }
+}
+
+// 5. שליפת עיר משתמש מעודכנת
+async function getLatestUserCityForToday(phone) {
+  if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return null;
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const response = await axios.get(`${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_city=not.is.null&order=id.desc&limit=1`, {
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
+      timeout: 5000
+    });
+    return response.data?.[0]?.user_city || null;
   } catch (err) {
     return null;
   }
@@ -117,5 +99,6 @@ module.exports = {
   logConversation,
   getLatestConversationForToday,
   getAllConversationsForToday,
-  getLatestUserNameForToday
+  getLatestUserNameForToday,
+  getLatestUserCityForToday
 };
