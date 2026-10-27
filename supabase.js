@@ -3,49 +3,64 @@
 // ==========================================
 const axios = require("axios");
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "";
-const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || "";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://huxqndiiksdgnxcmmmmz.supabase.co/rest/v1/";
+const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || "sb_publishable_ocXPjtF1EPDgoX5LdLHRkw_vKdENtfp";
 
 const getSupabaseHeaders = () => ({
   "apikey": SUPABASE_KEY,
   "Authorization": `Bearer ${SUPABASE_KEY}`,
-  "Content-Type": "application/json"
+  "Content-Type": "application/json",
+  "Prefer": "return=minimal"
 });
 
-// דוגמה לפונקציה לשליפת נתונים או רישום משתמש
-async function getUserData(phone) {
-  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+// פונקציית שמירת שיחה לטבלה conversation_logs
+async function logConversation(phone, question, answer, model) {
+  if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return;
   try {
-    const response = await axios.get(`${SUPABASE_URL}/rest/v1/users?phone=eq.${phone}`, {
-      headers: getSupabaseHeaders(),
-      timeout: 5000
-    });
-    return response.data?.[0] || null;
-  } catch (err) {
-    console.error("❌ שגיאה בשליפה מ-Supabase:", err.message);
-    return null;
-  }
-}
-
-// דוגמה לפונקציה לשמירת נתונים ב-Supabase
-async function logInteraction(phone, prompt, response) {
-  if (!SUPABASE_URL || !SUPABASE_KEY) return;
-  try {
-    await axios.post(`${SUPABASE_URL}/rest/v1/logs`, {
-      phone,
-      prompt,
-      response,
-      created_at: new Date()
+    await axios.post(`${SUPABASE_URL}/rest/v1/conversation_logs`, {
+      phone: String(phone),
+      question,
+      answer,
+      model: model || "unknown"
     }, {
       headers: getSupabaseHeaders(),
       timeout: 5000
     });
+    console.log(`💾 השיחה נשמרה בהצלחה ב-Supabase עבור מספר: ${phone}`);
   } catch (err) {
-    console.error("❌ שגיאה בשמירת לוג ב-Supabase:", err.message);
+    console.error("❌ שגיאה בשמירת שיחה ל-Supabase:", err.message);
+  }
+}
+
+// פונקציית שליפת השיחה האחרונה מאותו היום עבור מספר טלפון
+async function getLatestConversationForToday(phone) {
+  if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return null;
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const isoToday = todayStart.toISOString();
+
+    const queryUrl = `${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${isoToday}&order=id.desc&limit=1`;
+    
+    const response = await axios.get(queryUrl, {
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`
+      },
+      timeout: 5000
+    });
+
+    if (response.data && response.data.length > 0) {
+      return response.data[0];
+    }
+    return null;
+  } catch (err) {
+    console.error("❌ שגיאה בשליפת שיחה מ-Supabase:", err.message);
+    return null;
   }
 }
 
 module.exports = {
-  getUserData,
-  logInteraction
+  logConversation,
+  getLatestConversationForToday
 };
