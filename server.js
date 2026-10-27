@@ -168,19 +168,6 @@ const handleAudioRequest = async (req, res) => {
       history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "עוזר קולי רגיל", checkedSupabaseToday: false 
     };
 
-    // שליפת היסטוריה מהיום מ-Supabase בפנייה הראשונה של הסשן הנוכחי
-    let previousContext = null;
-    if (!userSession.checkedSupabaseToday) {
-      userSession.checkedSupabaseToday = true;
-      try {
-        const lastConv = await supabase.getLatestConversationForToday(userPhone);
-        if (lastConv) {
-          previousContext = lastConv;
-          console.log(`📌 נמצאה שיחה קודמת מהיום עבור ${userPhone}: "${lastConv.question}"`);
-        }
-      } catch (err) {}
-    }
-
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
     const parsedOpenAIKeys = new Set([process.env.OPENAI_API_KEY, process.env.OPENAI_API_KEY_1].filter(Boolean));
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
@@ -290,6 +277,28 @@ const handleAudioRequest = async (req, res) => {
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
       conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "עוזר קולי רגיל", checkedSupabaseToday: true });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור");
+    }
+
+    // זיהוי האם מדובר בבקשת סיכום / ניתוח פרופיל משתמש
+    const isSummaryRequested = config.summaryTriggers.some(t => normalizedTranscription.includes(t));
+    let previousContext = null;
+
+    if (isSummaryRequested) {
+      // שליפת כל ההיסטוריה של היום עבור סיכום מקיף
+      try {
+        const allLogs = await supabase.getAllConversationsForToday(userPhone);
+        if (allLogs && allLogs.length > 0) {
+          const formattedHistory = allLogs.map(l => `שאלה: "${l.question}" | תשובה: "${l.answer}"`).join("\n");
+          previousContext = { isFullSummary: true, summaryText: formattedHistory };
+        }
+      } catch (err) {}
+    } else if (!userSession.checkedSupabaseToday) {
+      // שליפת השיחה האחרונה מהיום לצורך פתיחה טבעית
+      userSession.checkedSupabaseToday = true;
+      try {
+        const lastConv = await supabase.getLatestConversationForToday(userPhone);
+        if (lastConv) previousContext = lastConv;
+      } catch (err) {}
     }
 
     const isDeepRequested = config.deepDetailsTriggers.some(t => normalizedTranscription.includes(t));
