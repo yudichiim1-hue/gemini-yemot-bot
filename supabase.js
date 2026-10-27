@@ -3,7 +3,7 @@
 // ==========================================
 const axios = require("axios");
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://huxqndiiksdgnxcmmmmz.supabase.co/rest/v1/";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://huxqndiiksdgnxcmmmmz.supabase.co/rest/v";
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || "sb_publishable_ocXPjtF1EPDgoX5LdLHRkw_vKdENtfp";
 
 const getSupabaseHeaders = () => ({
@@ -13,7 +13,7 @@ const getSupabaseHeaders = () => ({
   "Prefer": "return=minimal"
 });
 
-// פונקציית שמירת שיחה לטבלה conversation_logs
+// 1. פונקציית שמירת שיחה לטבלה conversation_logs
 async function logConversation(phone, question, answer, model) {
   if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return;
   try {
@@ -32,7 +32,7 @@ async function logConversation(phone, question, answer, model) {
   }
 }
 
-// פונקציית שליפת השיחה האחרונה מאותו היום עבור מספר טלפון
+// 2. פונקציית שליפת השיחה האחרונה מאותו היום עבור מספר טלפון
 async function getLatestConversationForToday(phone) {
   if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return null;
   try {
@@ -60,7 +60,34 @@ async function getLatestConversationForToday(phone) {
   }
 }
 
+// 3. פונקציית שליפת כל השיחות מאותו היום (עבור סיכום ופרופיל משתמש)
+async function getAllConversationsForToday(phone) {
+  if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return [];
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const isoToday = todayStart.toISOString();
+
+    const queryUrl = `${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${isoToday}&order=id.asc`;
+    
+    const response = await axios.get(queryUrl, {
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`
+      },
+      timeout: 5000
+    });
+
+    return response.data || [];
+  } catch (err) {
+    console.error("❌ שגיאה בשליפת כל השיחות מ-Supabase:", err.message);
+    return [];
+  }
+}
+
+// ייצוא כל הפונקציות לשימוש ב-server.js
 module.exports = {
   logConversation,
-  getLatestConversationForToday
+  getLatestConversationForToday,
+  getAllConversationsForToday
 };
