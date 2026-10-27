@@ -8,7 +8,11 @@ module.exports = {
 
     let contextReminderHebrew = "";
     if (previousContext) {
-      contextReminderHebrew = `\nמידע רקע חשוב: המשתמש דיבר איתך מוקדם יותר היום, ושאל: "${previousContext.question}" והשבת לו: "${previousContext.answer}". פתח את השיחה או התייחס לזה בטבעיות (למשל: "היי אני זוכר שדיברנו קודם על...").`;
+      if (previousContext.isFullSummary) {
+        contextReminderHebrew = `\nמידע רקע מקיף: המשתמש ביקש סיכום או ניתוח אישי. להלן כל השיחות והשאלות שלו מהיום:\n${previousContext.summaryText}\n\nהנחיה חשובה: נתח את השיחות הללו, הסבר למשתמש בצורה ידידותית וחכמה איך הוא מתנהג, מה סגנון השאלות שלו (למשל האם הוא מפתח ברמה מסוימת, אוהב להתעמק בפרטים טכניים, מחפש פתרונות מהירים וכו'). אל תגיד לעולם שאתה לא שומר מידע אישי – יש לך כאן את ההיסטוריה של היום, השתמש בה כדי לאפיין אותו באמת!`;
+      } else {
+        contextReminderHebrew = `\nמידע רקע חשוב: המשתמש דיבר איתך מוקדם יותר היום, ושאל: "${previousContext.question}" והשבת לו: "${previousContext.answer}". פתח את השיחה או התייחס לזה בטבעיות (למשל: "היי אני זוכר שדיברנו קודם על...").`;
+      }
     }
 
     const baseHebrew = `אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. סגנון הדיבור או הדמות הנוכחית שלך הם: "${currentPersona}".${contextReminderHebrew}
