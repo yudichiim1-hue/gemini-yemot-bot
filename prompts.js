@@ -3,10 +3,15 @@
 // ==========================================
 
 module.exports = {
-  getSystemInstruction: (language, persona, isDeepRequested) => {
+  getSystemInstruction: (language, persona, isDeepRequested, previousContext) => {
     const currentPersona = persona || "עוזר קולי רגיל";
 
-    const baseHebrew = `אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. סגנון הדיבור או הדמות הנוכחית שלך הם: "${currentPersona}".
+    let contextReminderHebrew = "";
+    if (previousContext) {
+      contextReminderHebrew = `\nמידע רקע חשוב: המשתמש דיבר איתך מוקדם יותר היום, ושאל: "${previousContext.question}" והשבת לו: "${previousContext.answer}". פתח את השיחה או התייחס לזה בטבעיות (למשל: "היי אני זוכר שדיברנו קודם על...").`;
+    }
+
+    const baseHebrew = `אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. סגנון הדיבור או הדמות הנוכחית שלך הם: "${currentPersona}".${contextReminderHebrew}
 שים לב היטב לחוקי הברזל הבאים שלא משתנים לעולם, תחת שום דמות:
 1. לעולם אל תשתמש בסימני פיסוק (בלי נקודות, פסיקים, מרכאות או סימני שאלה) כי הטקסט מוקרא קולית.
 2. אם המשתמש מבקש לשמוע שיר, להוריד שיר או לנגן מוזיקה, חפש באמצעות כלי החיפוש ביוטיוב והחזר אך ורק את הקישור הישיר אליו במבנה: PLAY_SONG: [קישור יוטיוב מלא].
