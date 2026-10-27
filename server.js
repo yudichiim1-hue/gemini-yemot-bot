@@ -4,6 +4,10 @@ const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
 
+// ייבוא ההגדרות והפרומפטים מהקבצים הנפרדים
+const config = require("./config");
+const prompts = require("./prompts");
+
 const app = express();
 
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
@@ -16,11 +20,8 @@ if (process.env.INITIAL_BANNED_PHONES) {
     const parsedBanned = JSON.parse(process.env.INITIAL_BANNED_PHONES);
     if (Array.isArray(parsedBanned)) {
       parsedBanned.forEach((phone) => bannedPhones.add(String(phone).trim()));
-      console.log(`🔒 סונכרנו ${bannedPhones.size} מספרים חסומים ממשתני הסביבה.`);
     }
-  } catch (err) {
-    console.error("❌ שגיאה בפענוח INITIAL_BANNED_PHONES:", err.message);
-  }
+  } catch (err) {}
 }
 
 const processedCalls = new Map();
@@ -32,19 +33,13 @@ const checkRateLimit = (phone) => {
   const now = Date.now();
   const userLog = requestLimits.get(phone) || [];
   const recentRequests = userLog.filter(timestamp => now - timestamp < 60000);
-  
-  if (recentRequests.length >= 10) {
-    console.warn(`⚠️ Rate limit חורג למספר: ${phone}`);
-    return false;
-  }
-  
+  if (recentRequests.length >= 10) return false;
   recentRequests.push(now);
   requestLimits.set(phone, recentRequests);
   return true;
 };
 
 const blockUserPermanently = (phone) => {
-  console.log(`🚨 חוסם לצמיתות את המספר: ${phone}`);
   bannedPhones.add(phone);
   if (conversationHistory.has(phone)) {
     const session = conversationHistory.get(phone);
@@ -55,7 +50,6 @@ const blockUserPermanently = (phone) => {
 
 setInterval(() => {
   const now = Date.now();
-  console.log("🧹 מריץ ניקוי תקופתי של היסטוריות שיחות ישנות...");
   for (const [phone, session] of conversationHistory.entries()) {
     if (session.lastActive && now - session.lastActive > 10 * 60 * 1000) {
       if (session.timer) clearTimeout(session.timer);
@@ -79,62 +73,23 @@ const normalizeText = (text) => {
     .trim();
 };
 
-const RESET_TRIGGERS = [
-  "תתחיל מחדש", "תתחילי מחדש", "אפס שיחה", "איפוס שיחה",
-  "שיחה חדשה", "התחל מחדש", "תמחק היסטוריה", "ניקוי היסטוריה"
-].map(normalizeText);
-
-const DEEP_DETAILS_TRIGGERS = [
-  "תתעמק", "תתעמקי", "תרחיב", "תרחיבי", "בהרחבה",
-  "תפרט", "תפרטי", "עוד מידע", "פירוט", "מידע מפורט"
-].map(normalizeText);
-
-const SWITCH_TO_ENGLISH_TRIGGERS = [
-  "עבור לאנגלית", "דבר אנגלית", "אנגלית", "switch to english", "english please", "speak english"
-].map(normalizeText);
-
-const SWITCH_TO_HEBREW_TRIGGERS = [
-  "עבור לעברית", "דבר עברית", "עברית", "switch to hebrew", "hebrew please", "speak hebrew"
-].map(normalizeText);
-
-const BLOCKED_KEYWORDS = [
-  "סקס", "פורנו", "עירום", "זונה", "שרמוטה", "אונס",
-  "זין", "כוס", "מזדיין", "להזדיין", "זיון", "מציצה",
-  "סרט כחול", "אנאלי", "אוראלי", "גורן", "סטריפטיז", "איכסה"
-].map(normalizeText);
-
-const getWarningMessage = (attempts) => {
-  if (attempts === 1) return "המפתחים שלי הגדירו שאסור לי לענות על זה זוהי אזהרה ראשונה מתוך שלוש במידה ותגיע לשלוש אזהרות תחסם מהמערכת";
-  if (attempts === 2) return "המפתחים שלי הגדירו שאסור לי לענות על זה זוהי אזהרה שנייה מתוך שלוש באזהרה הבאה תחסם מהמערכת";
-  return "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
-};
-
-const BANNED_USER_RESPONSE = "חשבונך נחסם לשימוש במערכת עקב חריגה מוגזמת מכללי השימוש";
-const BLOCKED_RESPONSE_MARKER = normalizeText("המפתחים שלי הגדירו לי שאסור לי לענות על זה");
-
 function sendYemotTtsResponse(res, text, nextFolder = "1") {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
     .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-
-  console.log(`🔊 מחזיר מענה קולי לימות המשיח (שלוחה /${nextFolder}): "${clean}"`);
   res.set("Content-Type", "text/plain; charset=utf-8");
   return res.send(`id_list_message=t-${clean}&go_to_folder=/${nextFolder}`);
 }
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-  return axios.post(geminiUrl, payload, { 
-    headers: { "Content-Type": "application/json" }, 
-    timeout: 12000 
-  });
+  return axios.post(geminiUrl, payload, { headers: { "Content-Type": "application/json" }, timeout: 12000 });
 };
 
 async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") {
   const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
-
   try {
     let videoUrl = targetInput;
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
@@ -143,38 +98,22 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
       if (match && match[1]) {
         videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
-        console.log(`📌 חולץ מזהה סרטון סידורי: ${match[1]}`);
       }
     }
-
-    console.log(`🎵 מוריד שיר באמצעות API חיצוני (Cobalt) עבור: ${videoUrl}`);
 
     const response = await axios.post("https://api.cobalt.tools/", {
       url: videoUrl,
       audioFormat: "mp3",
       isAudioOnly: true
     }, {
-      headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-      },
+      headers: { "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0" },
       timeout: 25000
     });
 
     const downloadDirectUrl = response.data?.url || response.data?.stream;
+    if (!downloadDirectUrl) throw new Error("קישור הורדה שגוי");
 
-    if (!downloadDirectUrl) {
-      throw new Error("השירות החיצוני לא החזיר קישור הורדה תקין.");
-    }
-
-    console.log("📥 מוריד את קובץ ה-MP3 לשרת מקישור ה-Stream...");
-
-    const audioFileRes = await axios.get(downloadDirectUrl, { 
-      responseType: "stream",
-      timeout: 30000 
-    });
-
+    const audioFileRes = await axios.get(downloadDirectUrl, { responseType: "stream", timeout: 30000 });
     const writer = fs.createWriteStream(tempFilePath);
     audioFileRes.data.pipe(writer);
 
@@ -184,28 +123,16 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
     });
 
     const stats = fs.statSync(tempFilePath);
-    if (stats.size < 100 * 1024) {
-      throw new Error("הקובץ שהורד קטן מדי או פגום.");
-    }
-
-    console.log(`⬆️ מעלה את השיר לשלוחה /${targetFolder} בימות המשיח...`);
+    if (stats.size < 100 * 1024) throw new Error("קובץ קטן מדי");
 
     const form = new FormData();
     form.append("file", fs.createReadStream(tempFilePath));
-
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
 
-    await axios.post(uploadUrl, form, {
-      headers: form.getHeaders(),
-      timeout: 30000
-    });
-
+    await axios.post(uploadUrl, form, { headers: form.getHeaders(), timeout: 30000 });
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-
-    console.log("✅ השיר הועלה בהצלחה לשלוחה!");
     return true;
   } catch (err) {
-    console.error("❌ שגיאה בהורדה או בהעלאת השיר:", err.message);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return false;
   }
@@ -214,55 +141,30 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-
     const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
     const userPhone = params.ApiPhone || params.phone || "default_user";
 
-    if (process.env.SYSTEM_TOKEN && token !== process.env.SYSTEM_TOKEN) {
-      console.warn(`⚠️ ניסיון גישה עם טוקן שגוי: ${token}`);
-      return res.status(403).send('Unauthorized Token');
-    }
-
-    if (!token) {
-      console.error("❌ שגיאה: לא נמצא טוקן (Token) לאימות מול ימות המשיח.");
-      return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר");
-    }
-
-    if (!checkRateLimit(userPhone)) {
-      return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר בדקה נסה שוב מאוחר יותר");
-    }
+    if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר");
+    if (!checkRateLimit(userPhone)) return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר");
 
     const callId = params.ApiCallId || params.ApiYFCallId;
-    const systemDid = params.ApiRealDID || params.ApiDID || "לא ידוע";
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
     const requestedModel = params.MODEL || params.model;
 
-    console.log(`📞 [ימות המשיח] פנייה חדשה | DID: ${systemDid} | טלפון: ${userPhone}`);
-
     if (callId && processedCalls.has(callId)) {
-      console.log(`🔄 שיחה כפולה זוהתה (CallId: ${callId}), מתעלם.`);
       res.set("Content-Type", "text/plain; charset=utf-8");
       return res.send(`go_to_folder=/1`);
     }
-
     if (callId) {
       processedCalls.set(callId, Date.now());
       setTimeout(() => processedCalls.delete(callId), 10000);
     }
 
-    if (bannedPhones.has(userPhone)) {
-      console.log(`🚫 משתמש חסום ניסה להתחבר: ${userPhone}`);
-      return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
-    }
+    if (bannedPhones.has(userPhone)) return sendYemotTtsResponse(res, config.bannedUserResponse);
 
     let userSession = conversationHistory.get(userPhone) || { 
-      history: [], 
-      timer: null, 
-      lastActive: Date.now(),
-      blockedAttempts: 0,
-      language: "he",
-      persona: "עוזר קולי רגיל"
+      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "עוזר קולי רגיל" 
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
@@ -283,7 +185,7 @@ const handleAudioRequest = async (req, res) => {
     if (directDeepgram) parsedDeepgram = String(directDeepgram).trim();
 
     const extractKeysDeeply = (obj, depth = 0) => {
-      if (depth > 5 || !obj) return; 
+      if (depth > 5 || !obj) return;
       for (const value of Object.values(obj)) {
         const items = Array.isArray(value) ? value : [value];
         for (const item of items) {
@@ -301,7 +203,6 @@ const handleAudioRequest = async (req, res) => {
         }
       }
     };
-
     extractKeysDeeply(params);
 
     const geminiKeys = Array.from(parsedGeminiKeys);
@@ -309,296 +210,158 @@ const handleAudioRequest = async (req, res) => {
     const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
 
-    console.log(`🔑 מפתחות זוהו במערכת -> Gemini: ${geminiKeys.length} | OpenAI: ${openAIKeys.length} | OpenRouter: ${openRouterKeys.length} | Deepgram: ${deepgramApiKey ? 'כן' : 'לא'}`);
-
     let audioBuffer = null;
-    const possiblePaths = [];
-
-    if (params.path) possiblePaths.push(params.path);
-    if (params.Path) possiblePaths.push(params.Path);
-    if (params.file) possiblePaths.push(params.file);
-    if (params.File) possiblePaths.push(params.File);
-    if (params.ApiPath) possiblePaths.push(params.ApiPath);
-    possiblePaths.push(`ivr2:/${secondaryFolder}/last.wav`);
-    possiblePaths.push(`ivr2:/${primaryFolder}/last.wav`);
+    const possiblePaths = [params.path, params.Path, params.file, params.File, params.ApiPath, `ivr2:/${secondaryFolder}/last.wav`, `ivr2:/${primaryFolder}/last.wav`].filter(Boolean);
 
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
       const downloadUrl = `https://www.call2all.co.il/ym/api/DownloadFile?token=${token}&path=${encodeURIComponent(cleanPath)}`;
-
       try {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 8000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
-          console.log(`📥 קובץ שמע הורד בהצלחה מנתיב: ${cleanPath}`);
           break;
         }
       } catch (err) {}
     }
 
-    if (!audioBuffer) {
-      console.warn("⚠️ לא נמצא קובץ שמע להורדה.");
-      return sendYemotTtsResponse(res, "לא נמצאה הקלטה תקינה אנא הקלט שוב");
-    }
+    if (!audioBuffer) return sendYemotTtsResponse(res, "לא נמצאה הקלטה תקינה אנא הקלט שוב");
 
     let transcribedText = "";
-
     if (deepgramApiKey) {
       try {
-        const currentLang = userSession.language || "he";
-        console.log(`🎙️ שולח קובץ שמע לתמלול ב-Deepgram (שפה נוכחית: ${currentLang})...`);
-        const dgResponse = await axios.post(
-          `https://api.deepgram.com/v1/listen?language=${currentLang}&model=nova-3&smart_format=true`,
-          audioBuffer,
-          {
-            headers: {
-              "Authorization": `Token ${deepgramApiKey}`,
-              "Content-Type": "audio/wav"
-            },
-            timeout: 10000
-          }
-        );
+        const dgResponse = await axios.post(`https://api.deepgram.com/v1/listen?language=${userSession.language}&model=nova-3&smart_format=true`, audioBuffer, {
+          headers: { "Authorization": `Token ${deepgramApiKey}`, "Content-Type": "audio/wav" },
+          timeout: 10000
+        });
         transcribedText = (dgResponse.data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "").trim();
-        console.log(`📝 תוצאת תמלול Deepgram: "${transcribedText}"`);
-      } catch (err) {
-        console.error("❌ שגיאה בתמלול Deepgram:", err.message);
-      }
+      } catch (err) {}
     }
 
     if (!transcribedText || transcribedText.length < 1) {
-      console.log(`⚠️ תמלול ריק לחלוטין. דורש הקלטה חוזרת.`);
       return sendYemotTtsResponse(res, userSession.language === "en" ? "Please speak clearly" : "אנא דבר יותר לאט וברור");
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
 
-    if (SWITCH_TO_ENGLISH_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
-      console.log(`🌐 משתמש ${userPhone} ביקש לעבור לאנגלית.`);
+    if (config.switchToEnglishTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.language = "en";
       conversationHistory.set(userPhone, userSession);
       return sendYemotTtsResponse(res, "Switched to English. How can I help you?");
     }
 
-    if (SWITCH_TO_HEBREW_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
-      console.log(`🌐 משתמש ${userPhone} ביקש לעבור לעברית.`);
+    if (config.switchToHebrewTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.language = "he";
       conversationHistory.set(userPhone, userSession);
       return sendYemotTtsResponse(res, "עברנו חזרה לעברית במה אוכל לעזור");
     }
 
-    // זיהוי גמיש לשינוי דמות/פרסונה תוך כדי שיחה
-    const normalizedLow = normalizedTranscription;
-    if (normalizedLow.includes("תתנהג כמו") || normalizedLow.includes("מעכשיו אתה") || normalizedLow.includes("דבר כמו") || normalizedLow.includes("תדבר כמו") || normalizedLow.includes("תהיה")) {
+    if (config.personaTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.persona = transcribedText;
       conversationHistory.set(userPhone, userSession);
-      console.log(`🎭 תפקיד/פרסונת המשתמש עודכנה ל: ${userSession.persona}`);
       return sendYemotTtsResponse(res, userSession.language === "en" ? "Got it. Changing persona" : `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`);
     }
 
-    if (BLOCKED_KEYWORDS.some(keyword => normalizedTranscription.includes(keyword))) {
-      console.warn(`⚠️ זיהו מילה חסומה בתמלול של המשתמש: ${userPhone}`);
+    if (config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
+        return sendYemotTtsResponse(res, config.bannedUserResponse);
       }
-
       userSession.lastActive = Date.now();
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
+      return sendYemotTtsResponse(res, config.getWarningMessage(userSession.blockedAttempts));
     }
 
-    if (RESET_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger))) {
-      console.log(`🔄 משתמש ${userPhone} ביקש איפוס שיחה.`);
-      conversationHistory.set(userPhone, {
-        history: [],
-        timer: null,
-        lastActive: Date.now(),
-        blockedAttempts: userSession.blockedAttempts,
-        language: "he",
-        persona: "עוזר קולי רגיל"
-      });
+    if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
+      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "עוזר קולי רגיל" });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור");
     }
 
-    const isDeepRequested = DEEP_DETAILS_TRIGGERS.some(trigger => normalizedTranscription.includes(trigger));
+    const isDeepRequested = config.deepDetailsTriggers.some(t => normalizedTranscription.includes(t));
 
     if (userSession.timer) clearTimeout(userSession.timer);
     userSession.lastActive = Date.now();
-    userSession.timer = setTimeout(() => {
-      conversationHistory.delete(userPhone);
-    }, 10 * 60 * 1000);
+    userSession.timer = setTimeout(() => conversationHistory.delete(userPhone), 10 * 60 * 1000);
 
     let finalAnswerText = "";
-    let usedModelName = "unknown";
-    
-    const currentPersona = userSession.persona || "עוזר קולי רגיל";
-
-    const basePersonalityHebrew = `אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. סגנון הדיבור או הדמות הנוכחית שלך הם: "${currentPersona}".
-שים לב היטב לחוקי הברזל הבאים שלא משתנים לעולם, תחת שום דמות:
-1. לעולם אל תשתמש בסימני פיסוק (בלי נקודות, פסיקים, מרכאות או סימני שאלה) כי הטקסט מוקרא קולית.
-2. אם המשתמש מבקש לשמוע שיר, להוריד שיר או לנגן מוזיקה, חפש באמצעות כלי החיפוש ביוטיוב והחזר אך ורק את הקישור הישיר אליו במבנה: PLAY_SONG: [קישור יוטיוב מלא].
-3. כאשר שואלים על חדשות, מידע או עובדות, השתמש בכלי החיפוש וענה מיד באופן עובדתי ומדויק. לעולם אל תגיד שאין לך גישה לאינטרנט.
-4. בסוף כל תשובה סיים בשאלת המשך קצרה.
-5. אם השאלה פוגענית ענה אך ורק: המפתחים שלי הגדירו לי שאסור לי לענות על זה.`;
-
-    const basePersonalityEnglish = `You are a helpful voice assistant connected to the internet. Your current persona/style is: "${currentPersona}". 
-Strict iron rules:
-1. Never use punctuation marks.
-2. If the user asks for a song, reply ONLY with: PLAY_SONG: [full youtube url].
-3. Always end every response with a short relevant follow up question.`;
-
-    const selectedBasePersonality = userSession.language === "en" ? basePersonalityEnglish : basePersonalityHebrew;
-
-    const systemInstruction = isDeepRequested
-      ? `${selectedBasePersonality} ${userSession.language === "en" ? "Elaborate in up to 130 words." : "המשתמש ביקש שתתעמק ותפרט. ענה בצורה מפורטת ומורחבת עד 130 מילים סהכ."}`
-      : `${selectedBasePersonality} ${userSession.language === "en" ? "Answer concisely in up to 45 words." : "ענה בקצרה ותמציתיות עד 45 מילים בלבד."}`;
-
-    const lowerTranscription = transcribedText.toLowerCase();
-    const SEARCH_KEYWORDS = ["חפש", "חדשות", "עדכון", "היום", "מי", "מה", "איפה", "מתי", "כמה", "איך", "תוצאות", "מזג אוויר", "תוצאה", "מחיר", "שיר", "להשמיע", "להוריד", "נגן", "search", "news", "today", "who", "what", "where", "when", "how", "song", "play", "music"];
-    const needsSearch = SEARCH_KEYWORDS.some(word => lowerTranscription.includes(word));
+    const systemInstruction = prompts.getSystemInstruction(userSession.language, userSession.persona, isDeepRequested);
+    const needsSearch = config.searchKeywords.some(word => transcribedText.toLowerCase().includes(word));
 
     if (geminiKeys.length > 0) {
-      const geminiModels = requestedModel 
-        ? [requestedModel, "gemini-2.5-flash-lite", "gemini-2.5-flash"] 
-        : ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
-
+      const geminiModels = requestedModel ? [requestedModel, "gemini-2.5-flash-lite", "gemini-2.5-flash"] : ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
-        { role: "model", parts: [{ text: "Understood. Responding according to guidelines." }] }
+        { role: "model", parts: [{ text: "Understood." }] }
       ];
-
-      userSession.history.forEach((msg) => {
-        geminiContents.push({
-          role: msg.role === "assistant" ? "model" : "user",
-          parts: [{ text: msg.content }]
-        });
-      });
-
+      userSession.history.forEach(m => geminiContents.push({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
       geminiContents.push({ role: "user", parts: [{ text: transcribedText }] });
 
       const payload = { contents: geminiContents };
       if (needsSearch) payload.tools = [{ googleSearch: {} }];
 
-      console.log(`🤖 [עדיפות 1] מנסה Gemini (${geminiKeys.length} מפתחות)...`);
-
       for (let k = 0; k < geminiKeys.length; k++) {
         if (finalAnswerText) break;
-        const apiKey = geminiKeys[k];
         for (const model of geminiModels) {
           try {
-            console.log(`📡 מנסה Gemini ${model} (מפתח ${k + 1})...`);
-            const response = await callGeminiSimple(model, payload, apiKey);
+            const response = await callGeminiSimple(model, payload, geminiKeys[k]);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
-              usedModelName = `gemini (${model})`;
-              console.log(`✅ הצלחה מול Gemini (${model})!`);
               break;
             }
-          } catch (err) {
-            console.error(`❌ שגיאה ב-Gemini (${model}):`, err.message);
-          }
+          } catch (err) {}
         }
       }
     }
 
     if (!finalAnswerText && openAIKeys.length > 0) {
-      console.log(`🤖 [עדיפות 2] מנסה OpenAI (${openAIKeys.length} מפתחות)...`);
-      const openAiPayload = {
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemInstruction },
-          ...userSession.history.map(m => ({ role: m.role, content: m.content })),
-          { role: "user", content: transcribedText }
-        ]
-      };
-
       for (const oaKey of openAIKeys) {
         if (finalAnswerText) break;
         try {
-          console.log("📡 שולח בקשה ל-OpenAI (gpt-4o-mini)...");
-          const oaResponse = await axios.post("https://api.openai.com/v1/chat/completions", openAiPayload, {
-            headers: {
-              "Authorization": `Bearer ${oaKey}`,
-              "Content-Type": "application/json"
-            },
-            timeout: 12000
-          });
+          const oaResponse = await axios.post("https://api.openai.com/v1/chat/completions", {
+            model: "gpt-4o-mini",
+            messages: [{ role: "system", content: systemInstruction }, ...userSession.history, { role: "user", content: transcribedText }]
+          }, { headers: { "Authorization": `Bearer ${oaKey}`, "Content-Type": "application/json" }, timeout: 12000 });
           if (oaResponse?.data?.choices?.[0]?.message?.content) {
             finalAnswerText = oaResponse.data.choices[0].message.content;
-            usedModelName = "openai (gpt-4o-mini)";
-            console.log("✅ הצלחה מול OpenAI!");
             break;
           }
-        } catch (oaErr) {
-          console.error("❌ שגיאה בקריאה ל-OpenAI:", oaErr.message);
-        }
+        } catch (e) {}
       }
     }
 
     if (!finalAnswerText && openRouterKeys.length > 0) {
-      console.log(`🤖 [עדיפות 3] מנסה OpenRouter...`);
-      const openRouterPayload = {
-        model: "openrouter/auto",
-        messages: [
-          { role: "system", content: systemInstruction },
-          ...userSession.history.map(m => ({ role: m.role, content: m.content })),
-          { role: "user", content: transcribedText }
-        ]
-      };
-
       for (const orKey of openRouterKeys) {
         if (finalAnswerText) break;
         try {
-          console.log("📡 שולח בקשה ל-OpenRouter...");
-          const orResponse = await axios.post("https://openrouter.ai/api/v1/chat/completions", openRouterPayload, {
-            headers: {
-              "Authorization": `Bearer ${orKey}`,
-              "Content-Type": "application/json"
-            },
-            timeout: 12000
-          });
+          const orResponse = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
+            model: "openrouter/auto",
+            messages: [{ role: "system", content: systemInstruction }, ...userSession.history, { role: "user", content: transcribedText }]
+          }, { headers: { "Authorization": `Bearer ${orKey}`, "Content-Type": "application/json" }, timeout: 12000 });
           if (orResponse?.data?.choices?.[0]?.message?.content) {
             finalAnswerText = orResponse.data.choices[0].message.content;
-            usedModelName = "openrouter (auto-free)";
-            console.log("✅ הצלחה מול OpenRouter!");
             break;
           }
-        } catch (orErr) {
-          console.error("❌ שגיאה בקריאה ל-OpenRouter:", orErr.message);
-        }
+        } catch (e) {}
       }
     }
 
-    if (!finalAnswerText) {
-      console.warn("⚠️ כל המודלים כשלו או הגיעו למכסה.");
-      finalAnswerText = userSession.language === "en" ? "Daily limit reached please try again later" : "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
-      usedModelName = "system-fallback";
-    }
+    if (!finalAnswerText) finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
 
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
-      console.log(`🎵 ה-AI זיהה בקשת שיר (יעד: "${songTarget}"). מתחיל הורדה והעלאה לשלוחה /3...`);
-
       const success = await downloadAndUploadToYemot(songTarget, token, "3");
-
-      if (success) {
-        return sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3");
-      } else {
-        return sendYemotTtsResponse(res, "מצטער לא הצלחתי להוריד את השיר מיוטיוב אנא נסה שוב");
-      }
+      return success ? sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3") : sendYemotTtsResponse(res, "מצטער לא הצלחתי להוריד את השיר");
     }
 
-    const normalizedAnswer = normalizeText(finalAnswerText);
-    if (normalizedAnswer.includes(BLOCKED_RESPONSE_MARKER)) {
-      console.warn(`⚠️ תשובת המודל הכילה חסימה עבור משתמש ${userPhone}`);
+    if (normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, BANNED_USER_RESPONSE);
+        return sendYemotTtsResponse(res, config.bannedUserResponse);
       }
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, getWarningMessage(userSession.blockedAttempts));
+      return sendYemotTtsResponse(res, config.getWarningMessage(userSession.blockedAttempts));
     }
 
     userSession.history.push({ role: "user", content: transcribedText });
@@ -607,9 +370,7 @@ Strict iron rules:
     conversationHistory.set(userPhone, userSession);
 
     return sendYemotTtsResponse(res, finalAnswerText);
-
   } catch (error) {
-    console.error("❌ === שגיאה כללית בקוד ===", error.message, error.stack);
     return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית");
   }
 };
