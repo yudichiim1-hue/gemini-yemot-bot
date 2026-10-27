@@ -3,16 +3,19 @@
 // ==========================================
 
 module.exports = {
-  getSystemInstruction: (language, persona, isDeepRequested, previousContext) => {
+  getSystemInstruction: (language, persona, isDeepRequested, previousContext, userName) => {
     const currentPersona = persona || "עוזר קולי רגיל";
+    const nameIntro = userName ? ` שמו של המשתמש הוא ${userName}. פנה אליו בשמו במידת הצורך.` : "";
 
     let contextReminderHebrew = "";
     if (previousContext) {
       if (previousContext.isFullSummary) {
-        contextReminderHebrew = `\nמידע רקע מקיף: המשתמש ביקש סיכום או ניתוח אישי. להלן כל השיחות והשאלות שלו מהיום:\n${previousContext.summaryText}\n\nהנחיה חשובה: נתח את השיחות הללו, הסבר למשתמש בצורה ידידותית וחכמה איך הוא מתנהג, מה סגנון השאלות שלו (למשל האם הוא מפתח ברמה מסוימת, אוהב להתעמק בפרטים טכניים, מחפש פתרונות מהירים וכו'). אל תגיד לעולם שאתה לא שומר מידע אישי – יש לך כאן את ההיסטוריה של היום, השתמש בה כדי לאפיין אותו באמת!`;
+        contextReminderHebrew = `\nמידע רקע מקיף:${nameIntro} המשתמש ביקש סיכום או ניתוח אישי. להלן כל השיחות והשאלות שלו מהיום:\n${previousContext.summaryText}\n\nהנחיה חשובה: נתח את השיחות הללו, הסבר למשתמש בצורה ידידותית וחכמה איך הוא מתנהג, מה סגנון השאלות שלו (למשל האם הוא מפתח ברמה מסוימת, אוהב להתעמק בפרטים טכניים, מחפש פתרונות מהירים וכו'). אל תגיד לעולם שאתה לא שומר מידע אישי – יש לך כאן את ההיסטוריה של היום, השתמש בה כדי לאפיין אותו באמת!`;
       } else {
-        contextReminderHebrew = `\nמידע רקע חשוב: המשתמש דיבר איתך מוקדם יותר היום, ושאל: "${previousContext.question}" והשבת לו: "${previousContext.answer}". פתח את השיחה או התייחס לזה בטבעיות (למשל: "היי אני זוכר שדיברנו קודם על...").`;
+        contextReminderHebrew = `\nמידע רקע חשוב:${nameIntro} המשתמש דיבר איתך מוקדם יותר היום, ושאל: "${previousContext.question}" והשבת לו: "${previousContext.answer}". פתח את השיחה או התייחס לזה בטבעיות (למשל: "היי ${userName || ''} אני זוכר שדיברנו קודם על...").`;
       }
+    } else if (userName) {
+      contextReminderHebrew = `\nמידע רקע חשוב: שם המשתמש הוא ${userName}.`;
     }
 
     const baseHebrew = `אתה עוזר קולי יעיל שמחובר לרשת האינטרנט. סגנון הדיבור או הדמות הנוכחית שלך הם: "${currentPersona}".${contextReminderHebrew}
@@ -24,7 +27,7 @@ module.exports = {
 5. אם השאלה פוגענית ענה אך ורק: המפתחים שלי הגדירו לי שאסור לי לענות על זה.
 6. הנחיית קריאת שעות: כאשר אתה מציין שעה כלשהי בתשובה, אל תכתוב לעולם בפורמט דיגיטלי (כמו 22:00 או 8:30) אלא כתוב אותה במילים מפורשות בעברית מדוברת (למשל: עשר בלילה, שמונה בבוקר, חמש אחהל).`;
 
-    const baseEnglish = `You are a helpful voice assistant connected to the internet. Your current persona/style is: "${currentPersona}". 
+    const baseEnglish = `You are a helpful voice assistant connected to the internet. Your current persona/style is: "${currentPersona}".${nameIntro}
 Strict iron rules:
 1. Never use punctuation marks.
 2. If the user asks for a song, reply ONLY with: PLAY_SONG: [full youtube url].
