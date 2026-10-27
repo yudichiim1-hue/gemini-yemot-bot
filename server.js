@@ -4,9 +4,10 @@ const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
 
-// ייבוא ההגדרות והפרומפטים מהקבצים הנפרדים
+// ייבוא הקבצים החיצוניים
 const config = require("./config");
 const prompts = require("./prompts");
+const supabase = require("./supabase");
 
 const app = express();
 
@@ -347,6 +348,9 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!finalAnswerText) finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
+
+    // אופציה לשמירת נתונים ל-Supabase ברקע
+    supabase.logInteraction(userPhone, transcribedText, finalAnswerText).catch(() => {});
 
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
