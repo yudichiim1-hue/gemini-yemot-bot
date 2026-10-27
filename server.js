@@ -4,7 +4,6 @@ const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
 
-// ייבוא הקבצים החיצוניים
 const config = require("./config");
 const prompts = require("./prompts");
 const supabase = require("./supabase");
@@ -15,16 +14,6 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
 const bannedPhones = new Set();
-
-if (process.env.INITIAL_BANNED_PHONES) {
-  try {
-    const parsedBanned = JSON.parse(process.env.INITIAL_BANNED_PHONES);
-    if (Array.isArray(parsedBanned)) {
-      parsedBanned.forEach((phone) => bannedPhones.add(String(phone).trim()));
-    }
-  } catch (err) {}
-}
-
 const processedCalls = new Map();
 const conversationHistory = new Map();
 const requestLimits = new Map();
@@ -97,16 +86,10 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
     } else {
       const match = targetInput.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
-      if (match && match[1]) {
-        videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
-      }
+      if (match && match[1]) videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
     }
 
-    const response = await axios.post("https://api.cobalt.tools/", {
-      url: videoUrl,
-      audioFormat: "mp3",
-      isAudioOnly: true
-    }, {
+    const response = await axios.post("https://api.cobalt.tools/", { url: videoUrl, audioFormat: "mp3", isAudioOnly: true }, {
       headers: { "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0" },
       timeout: 25000
     });
@@ -122,9 +105,6 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
       writer.on("finish", resolve);
       writer.on("error", reject);
     });
-
-    const stats = fs.statSync(tempFilePath);
-    if (stats.size < 100 * 1024) throw new Error("קובץ קטן מדי");
 
     const form = new FormData();
     form.append("file", fs.createReadStream(tempFilePath));
@@ -142,7 +122,7 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") 
 const handleAudioRequest = async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || params.Session_Token || process.env.YM_API_TOKEN;
+    const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || process.env.YM_API_TOKEN;
     const userPhone = params.ApiPhone || params.phone || "default_user";
 
     if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר");
@@ -165,7 +145,7 @@ const handleAudioRequest = async (req, res) => {
     if (bannedPhones.has(userPhone)) return sendYemotTtsResponse(res, config.bannedUserResponse);
 
     let userSession = conversationHistory.get(userPhone) || { 
-      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null 
+      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null, userCity: null 
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
@@ -198,9 +178,7 @@ const handleAudioRequest = async (req, res) => {
               else if (part.startsWith("sk-or-")) parsedOpenRouterKeys.add(part);
               else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) parsedDeepgram = part;
             }
-          } else if (typeof item === "object" && item !== null) {
-            extractKeysDeeply(item, depth + 1);
-          }
+          } else if (typeof item === "object" && item !== null) extractKeysDeeply(item, depth + 1);
         }
       }
     };
@@ -260,21 +238,34 @@ const handleAudioRequest = async (req, res) => {
     if (config.personaTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.persona = transcribedText;
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, userSession.language === "en" ? "Got it. Changing persona" : `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`);
+      return sendYemotTtsResponse(res, `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`);
     }
 
-    // זיהוי הגדרת שם (למשל: "היי אני יהודה" או "קוראים לי יהודה")
+    // זיהוי הגדרת שם
     if (config.nameTriggers.some(t => normalizedTranscription.includes(t))) {
       let extractedName = transcribedText;
       for (const t of config.nameTriggers) {
-        const regex = new RegExp(t, "i");
-        extractedName = extractedName.replace(regex, "").trim();
+        extractedName = extractedName.replace(new RegExp(t, "i"), "").trim();
       }
       if (extractedName) {
         userSession.userName = extractedName;
         conversationHistory.set(userPhone, userSession);
-        supabase.logConversation(userPhone, transcribedText, `נעים מאוד ${extractedName} מעכשיו אזכור אותך`, "system-name", extractedName).catch(() => {});
+        supabase.logConversation(userPhone, transcribedText, `נעים מאוד ${extractedName}`, "system-name", extractedName, userSession.userCity).catch(() => {});
         return sendYemotTtsResponse(res, `נעים מאוד ${extractedName} מעכשיו אזכור אותך במה אוכל לעזור`);
+      }
+    }
+
+    // זיהוי הגדרת עיר/מיקום (למשל: "אני ממודיעין עילית")
+    if (config.cityTriggers.some(t => normalizedTranscription.includes(t))) {
+      let extractedCity = transcribedText;
+      for (const t of config.cityTriggers) {
+        extractedCity = extractedCity.replace(new RegExp(t, "i"), "").trim();
+      }
+      if (extractedCity) {
+        userSession.userCity = extractedCity;
+        conversationHistory.set(userPhone, userSession);
+        supabase.logConversation(userPhone, transcribedText, `רשמתי שאתה מ${extractedCity}`, "system-city", userSession.userName, extractedCity).catch(() => {});
+        return sendYemotTtsResponse(res, `מעולה רשמתי שאתה מ${extractedCity} במה עוד אוכל לעזור`);
       }
     }
 
@@ -290,16 +281,20 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
-      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName });
+      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה שמי רוני במה אוכל לעזור");
     }
 
-    // שליפת שם משתמש מהיום אם עדיין לא נטען
-    if (!userSession.userName && !userSession.checkedSupabaseToday) {
+    // טעינת שם ועיר מ-Supabase אם טרם נטענו
+    if (!userSession.checkedSupabaseToday) {
       userSession.checkedSupabaseToday = true;
       try {
-        const savedName = await supabase.getLatestUserNameForToday(userPhone);
+        const [savedName, savedCity] = await Promise.all([
+          supabase.getLatestUserNameForToday(userPhone),
+          supabase.getLatestUserCityForToday(userPhone)
+        ]);
         if (savedName) userSession.userName = savedName;
+        if (savedCity) userSession.userCity = savedCity;
       } catch (err) {}
     }
 
@@ -335,6 +330,7 @@ const handleAudioRequest = async (req, res) => {
       isDeepRequested, 
       previousContext, 
       userSession.userName, 
+      userSession.userCity,
       userSession.history.length
     );
     const needsSearch = config.searchKeywords.some(word => transcribedText.toLowerCase().includes(word));
@@ -402,8 +398,8 @@ const handleAudioRequest = async (req, res) => {
 
     if (!finalAnswerText) finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
 
-    // שמירת השיחה ל-Supabase ברקע (כולל שם המשתמש)
-    supabase.logConversation(userPhone, transcribedText, finalAnswerText, usedModelName, userSession.userName).catch(() => {});
+    // שמירת השיחה ל-Supabase ברקע (כולל שם ועיר)
+    supabase.logConversation(userPhone, transcribedText, finalAnswerText, usedModelName, userSession.userName, userSession.userCity).catch(() => {});
 
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
