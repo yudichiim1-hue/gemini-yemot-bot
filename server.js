@@ -165,7 +165,7 @@ const handleAudioRequest = async (req, res) => {
     if (bannedPhones.has(userPhone)) return sendYemotTtsResponse(res, config.bannedUserResponse);
 
     let userSession = conversationHistory.get(userPhone) || { 
-      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "עוזר קולי רגיל", checkedSupabaseToday: false, userName: null 
+      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null 
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
@@ -273,7 +273,7 @@ const handleAudioRequest = async (req, res) => {
       if (extractedName) {
         userSession.userName = extractedName;
         conversationHistory.set(userPhone, userSession);
-        supabase.logConversation(userPhone, transcribedText, `מעכשיו אקרא לך ${extractedName}`, "system-name", extractedName).catch(() => {});
+        supabase.logConversation(userPhone, transcribedText, `נעים מאוד ${extractedName} מעכשיו אזכור אותך`, "system-name", extractedName).catch(() => {});
         return sendYemotTtsResponse(res, `נעים מאוד ${extractedName} מעכשיו אזכור אותך במה אוכל לעזור`);
       }
     }
@@ -290,12 +290,13 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
-      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "עוזר קולי רגיל", checkedSupabaseToday: true, userName: userSession.userName });
-      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה במה אוכל לעזור");
+      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName });
+      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה שמי רוני במה אוכל לעזור");
     }
 
     // שליפת שם משתמש מהיום אם עדיין לא נטען
     if (!userSession.userName && !userSession.checkedSupabaseToday) {
+      userSession.checkedSupabaseToday = true;
       try {
         const savedName = await supabase.getLatestUserNameForToday(userPhone);
         if (savedName) userSession.userName = savedName;
@@ -313,8 +314,7 @@ const handleAudioRequest = async (req, res) => {
           previousContext = { isFullSummary: true, summaryText: formattedHistory };
         }
       } catch (err) {}
-    } else if (!userSession.checkedSupabaseToday) {
-      userSession.checkedSupabaseToday = true;
+    } else {
       try {
         const lastConv = await supabase.getLatestConversationForToday(userPhone);
         if (lastConv) previousContext = lastConv;
@@ -329,7 +329,14 @@ const handleAudioRequest = async (req, res) => {
 
     let finalAnswerText = "";
     let usedModelName = "unknown";
-    const systemInstruction = prompts.getSystemInstruction(userSession.language, userSession.persona, isDeepRequested, previousContext, userSession.userName);
+    const systemInstruction = prompts.getSystemInstruction(
+      userSession.language, 
+      userSession.persona, 
+      isDeepRequested, 
+      previousContext, 
+      userSession.userName, 
+      userSession.history.length
+    );
     const needsSearch = config.searchKeywords.some(word => transcribedText.toLowerCase().includes(word));
 
     if (geminiKeys.length > 0) {
