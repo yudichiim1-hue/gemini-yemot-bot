@@ -111,11 +111,29 @@ async function getAllSystemConversationsForToday() {
   }
 }
 
+// 7. שליפת שיחות לפי 4 הספרות האחרונות
+async function getConversationsByLast4Digits(last4Digits) {
+  if (!SUPABASE_URL || !SUPABASE_KEY || !last4Digits) return [];
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const response = await axios.get(`${SUPABASE_URL}/conversation_logs?created_at=gte.${todayStart.toISOString()}&order=id.desc&limit=50`, {
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
+      timeout: 5000
+    });
+    const allLogs = response.data || [];
+    return allLogs.filter(log => log.phone && String(log.phone).endsWith(last4Digits));
+  } catch (err) {
+    return [];
+  }
+}
+
 module.exports = {
   logConversation,
   getLatestConversationForToday,
   getAllConversationsForToday,
   getLatestUserNameForToday,
   getLatestUserCityForToday,
-  getAllSystemConversationsForToday
+  getAllSystemConversationsForToday,
+  getConversationsByLast4Digits
 };
