@@ -31,7 +31,7 @@ const checkRateLimit = (phone) => {
 };
 
 const blockUserPermanently = (phone) => {
-  if (phone === ADMIN_PHONE) return; // מניעת חסימת מנהל בשום אופן
+  if (phone === ADMIN_PHONE) return;
   bannedPhones.add(phone);
   if (conversationHistory.has(phone)) {
     const session = conversationHistory.get(phone);
@@ -150,10 +150,8 @@ const handleAudioRequest = async (req, res) => {
     }
 
     let userSession = conversationHistory.get(userPhone) || { 
-      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null, userCity: null, isAdminAuthenticated: isAdminUser, awaitingAdminPassword: false 
+      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null, userCity: null, isAdminAuthenticated: false, awaitingAdminPassword: false 
     };
-
-    // אם זה מספר המנהל, נדאג שיהיה מאומת תמיד באופן אוטומטי אם נרצה, או שיצטרך סיסמה רגיל. כאן השארנו לו אפשרות להיכנס רגיל או להיות מזוהה.
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
     const parsedOpenAIKeys = new Set([process.env.OPENAI_API_KEY, process.env.OPENAI_API_KEY_1].filter(Boolean));
@@ -231,7 +229,7 @@ const handleAudioRequest = async (req, res) => {
     const normalizedTranscription = normalizeText(transcribedText);
 
     // ==========================================
-    // 👑 ניהול מצב מנהל (ADMIN MODE LOGIC)
+    // 👑 ניהול מצב מנהל (חייב להיות ראשון לפני הכל!)
     // ==========================================
 
     // 1. יציאה ממצב מנהל
@@ -242,7 +240,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     // 2. בקשת כניסה למצב מנהל
-    if (!userSession.isAdminAuthenticated && config.adminLoginTriggers.some(t => normalizedTranscription.includes(t))) {
+    if (!userSession.isAdminAuthenticated && !userSession.awaitingAdminPassword && config.adminLoginTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.awaitingAdminPassword = true;
       conversationHistory.set(userPhone, userSession);
       return sendYemotTtsResponse(res, "נא הקלד את סיסמת הניהול");
@@ -273,7 +271,6 @@ const handleAudioRequest = async (req, res) => {
 
     // 4. פעולות מנהל מאומת
     if (userSession.isAdminAuthenticated) {
-      // א. חסימת מספר טלפון
       if (normalizedTranscription.includes("חסום מספר") || normalizedTranscription.includes("תחסום את המספר")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
@@ -288,7 +285,6 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ב. ביטול חסימה למספר טלפון
       if (normalizedTranscription.includes("שחרר מספר") || normalizedTranscription.includes("בטל חסימה")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
@@ -300,7 +296,6 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ג. הקראת הלוגים האחרונים במערכת
       if (normalizedTranscription.includes("לוגים אחרונים") || normalizedTranscription.includes("פעילות אחרונה")) {
         try {
           const recentLogs = await supabase.getAllSystemConversationsForToday();
@@ -318,7 +313,6 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ד. שליפת שאלות ותשובות לפי מספר טלפון או 4 ספרות אחרונות
       if (normalizedTranscription.includes("שאלות") || normalizedTranscription.includes("תשובות") || normalizedTranscription.includes("היסטוריה") || normalizedTranscription.includes("שיחות")) {
         const fullPhoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const fourDigitsMatch = transcribedText.match(/\b\d{4}\b/);
@@ -435,7 +429,6 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // בדיקת מילים חסומות ואזהרות - חסינות מלאה למספר המנהל!
     if (!isAdminUser && config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
@@ -448,7 +441,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
-      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity, isAdminAuthenticated: isAdminUser, awaitingAdminPassword: false });
+      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity, isAdminAuthenticated: false, awaitingAdminPassword: false });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה שמי רוני במה אוכל לעזור");
     }
 
