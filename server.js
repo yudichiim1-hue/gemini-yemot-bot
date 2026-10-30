@@ -269,9 +269,10 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // 4. פעולות מנהל מאומת
+    // 4. פעולות מנהל מאומת (כאשר המנהל במצב ניהול פעיל - כל ההגנות מושבית עבורו!)
     if (userSession.isAdminAuthenticated) {
-      if (normalizedTranscription.includes("חסום מספר") || normalizedTranscription.includes("תחסום את המספר")) {
+      // א. חסימת מספר טלפון
+      if (normalizedTranscription.includes("חסום") || normalizedTranscription.includes("תחסום")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
         if (targetPhone) {
@@ -281,11 +282,12 @@ const handleAudioRequest = async (req, res) => {
           bannedPhones.add(targetPhone);
           return sendYemotTtsResponse(res, `המספר ${targetPhone} נחסם בהצלחה מהמערכת`);
         } else {
-          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון לחסימה");
+          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לחסימה אנא אמור שוב");
         }
       }
 
-      if (normalizedTranscription.includes("שחרר מספר") || normalizedTranscription.includes("בטל חסימה")) {
+      // ב. ביטול חסימה למספר טלפון
+      if (normalizedTranscription.includes("שחרר") || normalizedTranscription.includes("בטל חסימה") || normalizedTranscription.includes("הסר חסימה")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
         if (targetPhone && bannedPhones.has(targetPhone)) {
@@ -296,7 +298,8 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      if (normalizedTranscription.includes("לוגים אחרונים") || normalizedTranscription.includes("פעילות אחרונה")) {
+      // ג. הקראת הלוגים האחרונים במערכת
+      if (normalizedTranscription.includes("לוגים") || normalizedTranscription.includes("פעילות") || normalizedTranscription.includes("לוג")) {
         try {
           const recentLogs = await supabase.getAllSystemConversationsForToday();
           if (recentLogs && recentLogs.length > 0) {
@@ -313,6 +316,7 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
+      // ד. שליפת שאלות ותשובות לפי מספר טלפון או 4 ספרות אחרונות
       if (normalizedTranscription.includes("שאלות") || normalizedTranscription.includes("תשובות") || normalizedTranscription.includes("היסטוריה") || normalizedTranscription.includes("שיחות")) {
         const fullPhoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const fourDigitsMatch = transcribedText.match(/\b\d{4}\b/);
@@ -429,7 +433,8 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    if (!isAdminUser && config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
+    // הגנת מילים חסומות - מושבית לחלוטין אם מדובר במנהל, או אם המנהל נמצא במצב ניהול מאומת!
+    if (!isAdminUser && !userSession.isAdminAuthenticated && config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         blockUserPermanently(userPhone);
@@ -553,7 +558,8 @@ const handleAudioRequest = async (req, res) => {
       return success ? sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3") : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער");
     }
 
-    if (!isAdminUser && normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
+    // הגנת תגובת AI חסומה - מושבית לחלוטין אם מדובר במנהל במצב ניהול
+    if (!isAdminUser && !userSession.isAdminAuthenticated && normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         blockUserPermanently(userPhone);
