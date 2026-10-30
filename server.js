@@ -316,20 +316,27 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ד. שליפת 3 שאלות ותשובות לפי מספר מלא, או לפי 4 ספרות בלבד
-      const digitsOnly = transcribedText.replace(/\D/g, "");
-      const isOnlyFourDigits = /^\d{4}$/.test(digitsOnly);
+      // ד. שליפת 3 שאלות ותשובות לפי 4 ספרות (כולל המרת מילים לספרות אם צריך)
+      let digitsOnly = transcribedText.replace(/\D/g, "");
+      const wordToNumMap = { "אפס": "0", "אחת": "1", "שתיים": "2", "שלוש": "3", "ארבע": "4", "חמש": "5", "שש": "6", "שבע": "7", "שמונה": "8", "תשע": "9" };
+      if (digitsOnly.length === 0) {
+        for (const [word, num] of Object.entries(wordToNumMap)) {
+          if (transcribedText.includes(word)) digitsOnly += num;
+        }
+      }
+
+      const isOnlyFourDigits = /^\d{4}$/.test(digitsOnly) || transcribedText.replace(/\D/g, "").length === 4;
 
       if (normalizedTranscription.includes("שאלות") || normalizedTranscription.includes("תשובות") || normalizedTranscription.includes("היסטוריה") || normalizedTranscription.includes("שיחות") || isOnlyFourDigits) {
         const fullPhoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
-        const fourDigitsMatch = isOnlyFourDigits ? [digitsOnly] : transcribedText.match(/\b\d{4}\b/);
+        const fourDigitsMatch = isOnlyFourDigits ? [transcribedText.replace(/\D/g, "").slice(-4)] : transcribedText.match(/\b\d{4}\b/);
 
         if (fullPhoneMatch) {
           const targetPhone = fullPhoneMatch[0];
           try {
             const allLogs = await supabase.getAllConversationsForToday(targetPhone);
             if (allLogs && allLogs.length > 0) {
-              const lastConvs = allLogs.slice(-3); // מביא את 3 השיחות האחרונות
+              const lastConvs = allLogs.slice(-3);
               let responseText = `נמצאו שיחות עבור המספר ${targetPhone} . `;
               lastConvs.forEach((item, index) => {
                 responseText += `שיחה ${index + 1} . שאלה: ${item.question || "ללא"} . תשובה: ${item.answer || "ללא"} . `;
@@ -341,12 +348,12 @@ const handleAudioRequest = async (req, res) => {
           } catch (err) {
             return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים ממסד הנתונים");
           }
-        } else if (fourDigitsMatch) {
-          const last4 = fourDigitsMatch[0];
+        } else if (fourDigitsMatch || digitsOnly.length >= 4) {
+          const last4 = fourDigitsMatch ? fourDigitsMatch[0] : digitsOnly.slice(-4);
           try {
             const matchedLogs = await supabase.getConversationsByLast4Digits(last4);
             if (matchedLogs && matchedLogs.length > 0) {
-              const lastConvs = matchedLogs.slice(0, 3); // מביא את 3 השיחות האחרונות
+              const lastConvs = matchedLogs.slice(0, 3);
               let responseText = `נמצאו שיחות עבור מספר המסתיים ב ${last4} . `;
               lastConvs.forEach((item, index) => {
                 responseText += `שיחה ${index + 1} של משתמש ${item.phone} . שאלה: ${item.question || "ללא"} . תשובה: ${item.answer || "ללא"} . `;
@@ -436,7 +443,6 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // הגנת מילים חסומות - מושבית למנהל או למנהל במצב ניהול
     if (!isAdminUser && !userSession.isAdminAuthenticated && config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
