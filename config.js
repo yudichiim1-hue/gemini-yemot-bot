@@ -27,7 +27,7 @@ module.exports = {
   changeCityTriggers: ["החלף עיר", "שנה עיר", "עדכן עיר", "החלף עיר מגורים", "שנה עיר מגורים"],
 
   // הגדרות אבטחת מנהל
-  adminPassword: "2223", // תוכל לשנות לכל סיסמה שתבחרי
+  adminPassword: "2223",
   adminLoginTriggers: ["כנס למצב מנהל", "מצב מנהל", "כניסת מנהל"],
   adminLogoutTriggers: ["צא ממצב מנהל", "יציאה ממצב מנהל"],
 
