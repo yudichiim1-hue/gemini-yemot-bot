@@ -3,7 +3,7 @@
 // ==========================================
 const axios = require("axios");
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://huxqndiiksdgnxcmmmmz.supabase.co/rest/v";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://huxqndiiksdgnxcmmmmz.supabase.co/rest/v1";
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || "sb_publishable_ocXPjtF1EPDgoX5LdLHRkw_vKdENtfp";
 
 const getSupabaseHeaders = () => ({
@@ -17,7 +17,7 @@ const getSupabaseHeaders = () => ({
 async function logConversation(phone, question, answer, model, userName, userCity) {
   if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return;
   try {
-    await axios.post(`${SUPABASE_URL}/rest/v1/conversation_logs`, {
+    await axios.post(`${SUPABASE_URL}/conversation_logs`, {
       phone: String(phone),
       question,
       answer,
@@ -37,7 +37,7 @@ async function getLatestConversationForToday(phone) {
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const response = await axios.get(`${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.desc&limit=1`, {
+    const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.desc&limit=1`, {
       headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
       timeout: 5000
     });
@@ -47,13 +47,13 @@ async function getLatestConversationForToday(phone) {
   }
 }
 
-// 3. שליפת כל השיחות להיום
+// 3. שליפת כל השיחות להיום עבור משתמש ספציפי
 async function getAllConversationsForToday(phone) {
   if (!SUPABASE_URL || !SUPABASE_KEY || !phone || phone === "default_user") return [];
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const response = await axios.get(`${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.asc`, {
+    const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.asc`, {
       headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
       timeout: 5000
     });
@@ -69,7 +69,7 @@ async function getLatestUserNameForToday(phone) {
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const response = await axios.get(`${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_name=not.is.null&order=id.desc&limit=1`, {
+    const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_name=not.is.null&order=id.desc&limit=1`, {
       headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
       timeout: 5000
     });
@@ -85,7 +85,7 @@ async function getLatestUserCityForToday(phone) {
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const response = await axios.get(`${SUPABASE_URL}/rest/v1/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_city=not.is.null&order=id.desc&limit=1`, {
+    const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_city=not.is.null&order=id.desc&limit=1`, {
       headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
       timeout: 5000
     });
@@ -95,10 +95,27 @@ async function getLatestUserCityForToday(phone) {
   }
 }
 
+// 6. שליפת הפעילויות האחרונות במערכת (עבור מצב מנהל)
+async function getAllSystemConversationsForToday() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return [];
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const response = await axios.get(`${SUPABASE_URL}/conversation_logs?created_at=gte.${todayStart.toISOString()}&order=id.desc&limit=5`, {
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
+      timeout: 5000
+    });
+    return response.data || [];
+  } catch (err) {
+    return [];
+  }
+}
+
 module.exports = {
   logConversation,
   getLatestConversationForToday,
   getAllConversationsForToday,
   getLatestUserNameForToday,
-  getLatestUserCityForToday
+  getLatestUserCityForToday,
+  getAllSystemConversationsForToday
 };
