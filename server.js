@@ -241,7 +241,7 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotTtsResponse(res, "נא הקלד את סיסמת הניהול");
     }
 
-    // 3. אימות סיסמה מתוקן (חילוץ ספרות נטו)
+    // 3. אימות סיסמה
     if (userSession.awaitingAdminPassword) {
       userSession.awaitingAdminPassword = false;
       
@@ -308,24 +308,21 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ד. שליפת שאלות ותשובות לפי מספר טלפון ספציפי
+      // ד. שליפת שאלות ותשובות לפי מספר טלפון או 4 ספרות אחרונות
       if (normalizedTranscription.includes("שאלות") || normalizedTranscription.includes("תשובות") || normalizedTranscription.includes("היסטוריה") || normalizedTranscription.includes("שיחות")) {
-        const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
-        const targetPhone = phoneMatch ? phoneMatch[0] : null;
+        const fullPhoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
+        const fourDigitsMatch = transcribedText.match(/\b\d{4}\b/);
 
-        if (targetPhone) {
+        if (fullPhoneMatch) {
+          const targetPhone = fullPhoneMatch[0];
           try {
             const allLogs = await supabase.getAllConversationsForToday(targetPhone);
             if (allLogs && allLogs.length > 0) {
               const lastConvs = allLogs.slice(-2);
               let responseText = `נמצאו שיחות עבור המספר ${targetPhone} . `;
-              
               lastConvs.forEach((item, index) => {
-                const q = item.question || "ללא שאלה";
-                const a = item.answer || "ללא תשובה";
-                responseText += `שיחה ${index + 1} . שאלה: ${q} . תשובה: ${a} . `;
+                responseText += `שיחה ${index + 1} . שאלה: ${item.question || "ללא"} . תשובה: ${item.answer || "ללא"} . `;
               });
-
               return sendYemotTtsResponse(res, responseText);
             } else {
               return sendYemotTtsResponse(res, `לא נמצאו שיחות להיום עבור המספר ${targetPhone}`);
@@ -333,8 +330,25 @@ const handleAudioRequest = async (req, res) => {
           } catch (err) {
             return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים ממסד הנתונים");
           }
+        } else if (fourDigitsMatch) {
+          const last4 = fourDigitsMatch[0];
+          try {
+            const matchedLogs = await supabase.getConversationsByLast4Digits(last4);
+            if (matchedLogs && matchedLogs.length > 0) {
+              const lastConvs = matchedLogs.slice(0, 2);
+              let responseText = `נמצאו שיחות עבור מספר המסתיים ב ${last4} . `;
+              lastConvs.forEach((item, index) => {
+                responseText += `שיחה ${index + 1} של משתמש ${item.phone} . שאלה: ${item.question || "ללא"} . תשובה: ${item.answer || "ללא"} . `;
+              });
+              return sendYemotTtsResponse(res, responseText);
+            } else {
+              return sendYemotTtsResponse(res, `לא נמצאו שיחות להיום עבור מספר המסתיים ב ${last4}`);
+            }
+          } catch (err) {
+            return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים לפי 4 ספרות");
+          }
         } else {
-          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין אנא אמור שוב את המספר");
+          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון או ארבע ספרות אנא אמור שוב");
         }
       }
     }
