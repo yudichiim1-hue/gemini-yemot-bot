@@ -77,11 +77,12 @@ const supabase = {
     }
   },
 
-  // שליפת שיחות לפי 4 הספרות האחרונות של מספר הטלפון (מתאים למבנה הטבלה שלך)
+  //   // שליפת שיחות לפי 4 הספרות האחרונות של מספר הטלפון
   async getConversationsByLast4Digits(last4) {
     if (!SUPABASE_URL || !SUPABASE_KEY || !last4) return [];
     try {
-      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=like.*${last4}&order=id.desc&limit=3`, {
+      // מחפש התאמה של 4 הספרות בכל מקום במחרוזת של המספר (מוסיף כוכביות לפני ואחרי)
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=like.*${last4}*&order=id.desc&limit=3`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
       });
@@ -90,6 +91,7 @@ const supabase = {
       return [];
     }
   },
+
 
   // שליפת שם משתמש אחרון להיום
   async getLatestUserNameForToday(phone) {
