@@ -63,11 +63,11 @@ const supabase = {
     }
   },
 
-  // שליפת הפעילויות האחרונות במערכת (ללא מגבלת תאריך נוקשה)
+  // שליפת הפעילויות האחרונות במערכת
   async getAllSystemConversationsForToday() {
     if (!SUPABASE_URL || !SUPABASE_KEY) return [];
     try {
-      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?order=id.desc&limit=5`, {
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?order=id.desc&limit=10`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
       });
@@ -77,21 +77,23 @@ const supabase = {
     }
   },
 
-  //   // שליפת שיחות לפי 4 הספרות האחרונות של מספר הטלפון
+  // שליפת שיחות לפי 4 ספרות (שולף את ה-50 האחרונות ומסנן מקומית - הכי בטוח שיש!)
   async getConversationsByLast4Digits(last4) {
     if (!SUPABASE_URL || !SUPABASE_KEY || !last4) return [];
     try {
-      // מחפש התאמה של 4 הספרות בכל מקום במחרוזת של המספר (מוסיף כוכביות לפני ואחרי)
-      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=like.*${last4}*&order=id.desc&limit=3`, {
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?order=id.desc&limit=50`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
       });
-      return response.data || [];
+      
+      const allLogs = response.data || [];
+      // סינון מקומי ב-JavaScript: מוצא כל שורה שהשדה phone שלה מסתיים ב-4 הספרות המבוקשות
+      const matched = allLogs.filter(item => item.phone && String(item.phone).endsWith(last4));
+      return matched.slice(0, 3); // מחזיר את ה-3 האחרונות
     } catch (err) {
       return [];
     }
   },
-
 
   // שליפת שם משתמש אחרון להיום
   async getLatestUserNameForToday(phone) {
