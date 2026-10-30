@@ -145,7 +145,7 @@ const handleAudioRequest = async (req, res) => {
     if (bannedPhones.has(userPhone)) return sendYemotTtsResponse(res, config.bannedUserResponse);
 
     let userSession = conversationHistory.get(userPhone) || { 
-      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null, userCity: null 
+      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null, userCity: null, isAdminAuthenticated: false, awaitingAdminPassword: false 
     };
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
@@ -223,6 +223,118 @@ const handleAudioRequest = async (req, res) => {
 
     const normalizedTranscription = normalizeText(transcribedText);
 
+    // ==========================================
+    // 👑 ניהול מצב מנהל (ADMIN MODE LOGIC)
+    // ==========================================
+
+    // 1. יציאה ממצב מנהל
+    if (userSession.isAdminAuthenticated && config.adminLogoutTriggers.some(t => normalizedTranscription.includes(t))) {
+      userSession.isAdminAuthenticated = false;
+      conversationHistory.set(userPhone, userSession);
+      return sendYemotTtsResponse(res, "יצאת ממצב מנהל בהצלחה במה עוד אוכל לעזור");
+    }
+
+    // 2. בקשת כניסה למצב מנהל
+    if (!userSession.isAdminAuthenticated && config.adminLoginTriggers.some(t => normalizedTranscription.includes(t))) {
+      userSession.awaitingAdminPassword = true;
+      conversationHistory.set(userPhone, userSession);
+      return sendYemotTtsResponse(res, "נא הקלד את סיסמת הניהול");
+    }
+
+    // 3. אימות סיסמה
+    if (userSession.awaitingAdminPassword) {
+      userSession.awaitingAdminPassword = false;
+      const enteredPassword = transcribedText.replace(/\s+/g, "").trim();
+      
+      if (enteredPassword === config.adminPassword) {
+        userSession.isAdminAuthenticated = true;
+        conversationHistory.set(userPhone, userSession);
+        return sendYemotTtsResponse(res, "סיסמה נכונה ברוך הבא למצב מנהל איזה מידע תרצה לשלוף");
+      } else {
+        conversationHistory.set(userPhone, userSession);
+        return sendYemotTtsResponse(res, "סיסמה שגויה חזרת למצב רגיל");
+      }
+    }
+
+    // 4. פעולות מנהל מאומת (כולל שאלות/תשובות, חסימות, והקראת לוגים אחרונים)
+    if (userSession.isAdminAuthenticated) {
+      // א. חסימת מספר טלפון
+      if (normalizedTranscription.includes("חסום מספר") || normalizedTranscription.includes("תחסום את המספר")) {
+        const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
+        const targetPhone = phoneMatch ? phoneMatch[0] : null;
+        if (targetPhone) {
+          bannedPhones.add(targetPhone);
+          return sendYemotTtsResponse(res, `המספר ${targetPhone} נחסם בהצלחה מהמערכת`);
+        } else {
+          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון לחסימה");
+        }
+      }
+
+      // ב. ביטול חסימה למספר טלפון
+      if (normalizedTranscription.includes("שחרר מספר") || normalizedשnormalized = normalizedTranscription.includes("בטל חסימה")) {
+        const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
+        const targetPhone = phoneMatch ? phoneMatch[0] : null;
+        if (targetPhone && bannedPhones.has(targetPhone)) {
+          bannedPhones.delete(targetPhone);
+          return sendYemotTtsResponse(res, `החסימה עבור המספר ${targetPhone} בוטלה בהצלחה`);
+        } else {
+          return sendYemotTtsResponse(res, "המספר לא נמצא ברשימת החסימות או שלא זוהה מספר");
+        }
+      }
+
+      // ג. הקראת הלוגים האחרונים במערכת (כלליים)
+      if (normalizedTranscription.includes("לוגים אחרונים") || normalizedTranscription.includes("פעילות אחרונה")) {
+        try {
+          const recentLogs = await supabase.getAllSystemConversationsForToday();
+          if (recentLogs && recentLogs.length > 0) {
+            let logText = "הפעילויות האחרונות במערכת . ";
+            recentLogs.slice(0, 2).forEach((item, index) => {
+              logText += `משתמש ${item.phone} שאל: ${item.question} וענה לו: ${item.answer} . `;
+            });
+            return sendYemotTtsResponse(res, logText);
+          } else {
+            return sendYemotTtsResponse(res, "אין פעילות רשומה להיום");
+          }
+        } catch (err) {
+          return sendYemotTtsResponse(res, "שגיאה בשליפת הלוגים האחרונים");
+        }
+      }
+
+      // ד. שליפת שאלות ותשובות לפי מספר טלפון ספציפי
+      if (normalizedTranscription.includes("שאלות") || normalizedTranscription.includes("תשובות") || normalizedTranscription.includes("היסטוריה") || normalizedTranscription.includes("שיחות")) {
+        const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
+        const targetPhone = phoneMatch ? phoneMatch[0] : null;
+
+        if (targetPhone) {
+          try {
+            const allLogs = await supabase.getAllConversationsForToday(targetPhone);
+            if (allLogs && allLogs.length > 0) {
+              const lastConvs = allLogs.slice(-2);
+              let responseText = `נמצאו שיחות עבור המספר ${targetPhone} . `;
+              
+              lastConvs.forEach((item, index) => {
+                const q = item.question || "ללא שאלה";
+                const a = item.answer || "ללא תשובה";
+                responseText += `שיחה ${index + 1} . שאלה: ${q} . תשובה: ${a} . `;
+              });
+
+              return sendYemotTtsResponse(res, responseText);
+            } else {
+              return sendYemotTtsResponse(res, `לא נמצאו שיחות להיום עבור המספר ${targetPhone}`);
+            }
+          } catch (err) {
+            return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים ממסד הנתונים");
+          }
+        } else {
+          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין אנא אמור שוב את המספר");
+        }
+      }
+    }
+
+    // ==========================================
+    // 🤖 המשך זרימה רגילה (שפות, שם, עיר, אבטחה וכו')
+    // ==========================================
+
     if (config.switchToEnglishTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.language = "en";
       conversationHistory.set(userPhone, userSession);
@@ -241,7 +353,6 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotTtsResponse(res, `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`);
     }
 
-    // טעינת שם ועיר מ-Supabase אם טרם נטענו
     if (!userSession.checkedSupabaseToday) {
       userSession.checkedSupabaseToday = true;
       try {
@@ -254,10 +365,8 @@ const handleAudioRequest = async (req, res) => {
       } catch (err) {}
     }
 
-    // זיהוי הגדרת שם (רק אם אין שם שמור או אם ביקש להחליף במפורש)
     if (config.nameTriggers.some(t => normalizedTranscription.includes(t))) {
       const wantsToChangeName = config.changeNameTriggers.some(cnt => normalizedTranscription.includes(cnt));
-
       if (!userSession.userName || wantsToChangeName) {
         let extractedName = transcribedText;
         for (const cnt of config.changeNameTriggers) {
@@ -266,7 +375,6 @@ const handleAudioRequest = async (req, res) => {
         for (const t of config.nameTriggers) {
           extractedName = extractedName.replace(new RegExp(t, "i"), "").trim();
         }
-        
         if (extractedName) {
           userSession.userName = extractedName;
           conversationHistory.set(userPhone, userSession);
@@ -276,10 +384,8 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // זיהוי הגדרת עיר (רק אם אין עיר שמורה או אם ביקש להחליף במפורש)
     if (config.cityTriggers.some(t => normalizedTranscription.includes(t))) {
       const wantsToChangeCity = config.changeCityTriggers.some(ct => normalizedTranscription.includes(ct));
-
       if (!userSession.userCity || wantsToChangeCity) {
         let extractedCity = transcribedText;
         for (const ct of config.changeCityTriggers) {
@@ -288,7 +394,6 @@ const handleAudioRequest = async (req, res) => {
         for (const t of config.cityTriggers) {
           extractedCity = extractedCity.replace(new RegExp(t, "i"), "").trim();
         }
-        
         if (extractedCity) {
           userSession.userCity = extractedCity;
           conversationHistory.set(userPhone, userSession);
@@ -310,7 +415,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
-      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity });
+      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity, isAdminAuthenticated: false, awaitingAdminPassword: false });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה שמי רוני במה אוכל לעזור");
     }
 
@@ -439,7 +544,7 @@ const handleAudioRequest = async (req, res) => {
 
     return sendYemotTtsResponse(res, finalAnswerText);
   } catch (error) {
-    return sendYemotTtsResponse(res, "אני מתנחל חלה שגיאה במערכת אנא נסה שנית");
+    return sendYemotTtsResponse(res, "אני מתנצל חלה שגיאה במערכת אנא נסה שנית");
   }
 };
 
