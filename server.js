@@ -241,11 +241,19 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotTtsResponse(res, "נא הקלד את סיסמת הניהול");
     }
 
-    // 3. אימות סיסמה
+    // 3. אימות סיסמה מתוקן (חילוץ ספרות נטו)
     if (userSession.awaitingAdminPassword) {
       userSession.awaitingAdminPassword = false;
-      const enteredPassword = transcribedText.replace(/\s+/g, "").trim();
       
+      let enteredPassword = transcribedText.replace(/\s+/g, "").trim();
+      const wordToNum = { "אחת": "1", "שתיים": "2", "שלוש": "3", "ארבע": "4", "חמש": "5", "שש": "6", "שבע": "7", "שמונה": "8", "תשע": "9", "אפס": "0" };
+      for (const [word, num] of Object.entries(wordToNum)) {
+        if (transcribedText.includes(word)) {
+          enteredPassword = enteredPassword.replace(new RegExp(word, "g"), num);
+        }
+      }
+      enteredPassword = enteredPassword.replace(/\D/g, "");
+
       if (enteredPassword === config.adminPassword) {
         userSession.isAdminAuthenticated = true;
         conversationHistory.set(userPhone, userSession);
@@ -270,7 +278,7 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ב. ביטול חסימה למספר טלפון (תוקן)
+      // ב. ביטול חסימה למספר טלפון
       if (normalizedTranscription.includes("שחרר מספר") || normalizedTranscription.includes("בטל חסימה")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
