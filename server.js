@@ -256,7 +256,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // 4. פעולות מנהל מאומת (כולל שאלות/תשובות, חסימות, והקראת לוגים אחרונים)
+    // 4. פעולות מנהל מאומת
     if (userSession.isAdminAuthenticated) {
       // א. חסימת מספר טלפון
       if (normalizedTranscription.includes("חסום מספר") || normalizedTranscription.includes("תחסום את המספר")) {
@@ -270,8 +270,8 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ב. ביטול חסימה למספר טלפון
-      if (normalizedTranscription.includes("שחרר מספר") || normalizedשnormalized = normalizedTranscription.includes("בטל חסימה")) {
+      // ב. ביטול חסימה למספר טלפון (תוקן)
+      if (normalizedTranscription.includes("שחרר מספר") || normalizedTranscription.includes("בטל חסימה")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
         if (targetPhone && bannedPhones.has(targetPhone)) {
@@ -282,13 +282,13 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ג. הקראת הלוגים האחרונים במערכת (כלליים)
+      // ג. הקראת הלוגים האחרונים במערכת
       if (normalizedTranscription.includes("לוגים אחרונים") || normalizedTranscription.includes("פעילות אחרונה")) {
         try {
           const recentLogs = await supabase.getAllSystemConversationsForToday();
           if (recentLogs && recentLogs.length > 0) {
             let logText = "הפעילויות האחרונות במערכת . ";
-            recentLogs.slice(0, 2).forEach((item, index) => {
+            recentLogs.slice(0, 2).forEach((item) => {
               logText += `משתמש ${item.phone} שאל: ${item.question} וענה לו: ${item.answer} . `;
             });
             return sendYemotTtsResponse(res, logText);
@@ -332,7 +332,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     // ==========================================
-    // 🤖 המשך זרימה רגילה (שפות, שם, עיר, אבטחה וכו')
+    // 🤖 המשך זרימה רגילה
     // ==========================================
 
     if (config.switchToEnglishTriggers.some(t => normalizedTranscription.includes(t))) {
