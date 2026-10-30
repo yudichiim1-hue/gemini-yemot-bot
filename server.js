@@ -13,13 +13,14 @@ const app = express();
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
+const ADMIN_PHONE = "0556755846";
 const bannedPhones = new Set();
 const processedCalls = new Map();
 const conversationHistory = new Map();
 const requestLimits = new Map();
 
 const checkRateLimit = (phone) => {
-  if (!phone || phone === "default_user") return true;
+  if (!phone || phone === "default_user" || phone === ADMIN_PHONE) return true;
   const now = Date.now();
   const userLog = requestLimits.get(phone) || [];
   const recentRequests = userLog.filter(timestamp => now - timestamp < 60000);
@@ -30,6 +31,7 @@ const checkRateLimit = (phone) => {
 };
 
 const blockUserPermanently = (phone) => {
+  if (phone === ADMIN_PHONE) return; // מניעת חסימת מנהל בשום אופן
   bannedPhones.add(phone);
   if (conversationHistory.has(phone)) {
     const session = conversationHistory.get(phone);
@@ -124,6 +126,7 @@ const handleAudioRequest = async (req, res) => {
     const params = { ...req.query, ...req.body };
     const token = params.token || params.TOKEN || params.ApiToken || params.SessionToken || process.env.YM_API_TOKEN;
     const userPhone = params.ApiPhone || params.phone || "default_user";
+    const isAdminUser = (userPhone === ADMIN_PHONE);
 
     if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר");
     if (!checkRateLimit(userPhone)) return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר");
@@ -142,11 +145,15 @@ const handleAudioRequest = async (req, res) => {
       setTimeout(() => processedCalls.delete(callId), 10000);
     }
 
-    if (bannedPhones.has(userPhone)) return sendYemotTtsResponse(res, config.bannedUserResponse);
+    if (!isAdminUser && bannedPhones.has(userPhone)) {
+      return sendYemotTtsResponse(res, config.bannedUserResponse);
+    }
 
     let userSession = conversationHistory.get(userPhone) || { 
-      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null, userCity: null, isAdminAuthenticated: false, awaitingAdminPassword: false 
+      history: [], timer: null, lastActive: Date.now(), blockedAttempts: 0, language: "he", persona: "רוני", checkedSupabaseToday: false, userName: null, userCity: null, isAdminAuthenticated: isAdminUser, awaitingAdminPassword: false 
     };
+
+    // אם זה מספר המנהל, נדאג שיהיה מאומת תמיד באופן אוטומטי אם נרצה, או שיצטרך סיסמה רגיל. כאן השארנו לו אפשרות להיכנס רגיל או להיות מזוהה.
 
     const parsedGeminiKeys = new Set([process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1].filter(Boolean));
     const parsedOpenAIKeys = new Set([process.env.OPENAI_API_KEY, process.env.OPENAI_API_KEY_1].filter(Boolean));
@@ -271,6 +278,9 @@ const handleAudioRequest = async (req, res) => {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
         if (targetPhone) {
+          if (targetPhone === ADMIN_PHONE) {
+            return sendYemotTtsResponse(res, "לא ניתן לחסום את מספר המנהל הראשי");
+          }
           bannedPhones.add(targetPhone);
           return sendYemotTtsResponse(res, `המספר ${targetPhone} נחסם בהצלחה מהמערכת`);
         } else {
@@ -425,7 +435,8 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    if (config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
+    // בדיקת מילים חסומות ואזהרות - חסינות מלאה למספר המנהל!
+    if (!isAdminUser && config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         blockUserPermanently(userPhone);
@@ -437,7 +448,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
-      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity, isAdminAuthenticated: false, awaitingAdminPassword: false });
+      conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity, isAdminAuthenticated: isAdminUser, awaitingAdminPassword: false });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה שמי רוני במה אוכל לעזור");
     }
 
@@ -549,7 +560,7 @@ const handleAudioRequest = async (req, res) => {
       return success ? sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3") : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער");
     }
 
-    if (normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
+    if (!isAdminUser && normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         blockUserPermanently(userPhone);
