@@ -1,12 +1,15 @@
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://huxqndiiksdgnxcmmmmz.supabase.co/rest/v";
+const SUPABASE_URL = process.env.SUPABASE_URL || "huxqndiiksdgnxcmmmmz";
 const SUPABASE_KEY = process.env.SUPABASE_KEY || "sb_publishable_ocXPjtF1EPDgoX5LdLHRkw_vKdENtfp";
 
 const supabase = {
-  // רישום שיחה חדשה במסד הנתונים
+  // רישום שיחה חדשה במסד הנתונים עם דיבוג שגיאות מלא
   async logConversation(phone, question, answer, model, userName = null, userCity = null) {
-    if (!SUPABASE_URL || !SUPABASE_KEY) return;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      console.error("❌ חסרים SUPABASE_URL או SUPABASE_KEY");
+      return;
+    }
     try {
       await axios.post(`${SUPABASE_URL}/conversation_logs`, {
         phone: phone || "unknown",
@@ -24,8 +27,9 @@ const supabase = {
         },
         timeout: 5000
       });
+      console.log("✅ לוג נשמר בהצלחה ב-Supabase");
     } catch (err) {
-      console.error("Supabase log error:", err.message);
+      console.error("❌ Supabase log error details:", err.response?.data || err.message);
     }
   },
 
