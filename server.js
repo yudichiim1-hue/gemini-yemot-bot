@@ -241,31 +241,60 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotTtsResponse(res, `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`);
     }
 
-    // זיהוי הגדרת שם
+    // טעינת שם ועיר מ-Supabase אם טרם נטענו
+    if (!userSession.checkedSupabaseToday) {
+      userSession.checkedSupabaseToday = true;
+      try {
+        const [savedName, savedCity] = await Promise.all([
+          supabase.getLatestUserNameForToday(userPhone),
+          supabase.getLatestUserCityForToday(userPhone)
+        ]);
+        if (savedName) userSession.userName = savedName;
+        if (savedCity) userSession.userCity = savedCity;
+      } catch (err) {}
+    }
+
+    // זיהוי הגדרת שם (רק אם אין שם שמור או אם ביקש להחליף במפורש)
     if (config.nameTriggers.some(t => normalizedTranscription.includes(t))) {
-      let extractedName = transcribedText;
-      for (const t of config.nameTriggers) {
-        extractedName = extractedName.replace(new RegExp(t, "i"), "").trim();
-      }
-      if (extractedName) {
-        userSession.userName = extractedName;
-        conversationHistory.set(userPhone, userSession);
-        supabase.logConversation(userPhone, transcribedText, `נעים מאוד ${extractedName}`, "system-name", extractedName, userSession.userCity).catch(() => {});
-        return sendYemotTtsResponse(res, `נעים מאוד ${extractedName} מעכשיו אזכור אותך במה אוכל לעזור`);
+      const wantsToChangeName = config.changeNameTriggers.some(cnt => normalizedTranscription.includes(cnt));
+
+      if (!userSession.userName || wantsToChangeName) {
+        let extractedName = transcribedText;
+        for (const cnt of config.changeNameTriggers) {
+          extractedName = extractedName.replace(new RegExp(cnt, "i"), "").trim();
+        }
+        for (const t of config.nameTriggers) {
+          extractedName = extractedName.replace(new RegExp(t, "i"), "").trim();
+        }
+        
+        if (extractedName) {
+          userSession.userName = extractedName;
+          conversationHistory.set(userPhone, userSession);
+          supabase.logConversation(userPhone, transcribedText, `נעים מאוד ${extractedName}`, "system-name", extractedName, userSession.userCity).catch(() => {});
+          return sendYemotTtsResponse(res, `נעים מאוד ${extractedName} מעכשיו אזכור אותך במה אוכל לעזור`);
+        }
       }
     }
 
-    // זיהוי הגדרת עיר/מיקום (למשל: "אני ממודיעין עילית")
+    // זיהוי הגדרת עיר (רק אם אין עיר שמורה או אם ביקש להחליף במפורש)
     if (config.cityTriggers.some(t => normalizedTranscription.includes(t))) {
-      let extractedCity = transcribedText;
-      for (const t of config.cityTriggers) {
-        extractedCity = extractedCity.replace(new RegExp(t, "i"), "").trim();
-      }
-      if (extractedCity) {
-        userSession.userCity = extractedCity;
-        conversationHistory.set(userPhone, userSession);
-        supabase.logConversation(userPhone, transcribedText, `רשמתי שאתה מ${extractedCity}`, "system-city", userSession.userName, extractedCity).catch(() => {});
-        return sendYemotTtsResponse(res, `מעולה רשמתי שאתה מ${extractedCity} במה עוד אוכל לעזור`);
+      const wantsToChangeCity = config.changeCityTriggers.some(ct => normalizedTranscription.includes(ct));
+
+      if (!userSession.userCity || wantsToChangeCity) {
+        let extractedCity = transcribedText;
+        for (const ct of config.changeCityTriggers) {
+          extractedCity = extractedCity.replace(new RegExp(ct, "i"), "").trim();
+        }
+        for (const t of config.cityTriggers) {
+          extractedCity = extractedCity.replace(new RegExp(t, "i"), "").trim();
+        }
+        
+        if (extractedCity) {
+          userSession.userCity = extractedCity;
+          conversationHistory.set(userPhone, userSession);
+          supabase.logConversation(userPhone, transcribedText, `רשמתי שאתה מ${extractedCity}`, "system-city", userSession.userName, extractedCity).catch(() => {});
+          return sendYemotTtsResponse(res, `מעולה רשמתי שאתה מ${extractedCity} במה עוד אוכל לעזור`);
+        }
       }
     }
 
@@ -283,19 +312,6 @@ const handleAudioRequest = async (req, res) => {
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
       conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity });
       return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה שמי רוני במה אוכל לעזור");
-    }
-
-    // טעינת שם ועיר מ-Supabase אם טרם נטענו
-    if (!userSession.checkedSupabaseToday) {
-      userSession.checkedSupabaseToday = true;
-      try {
-        const [savedName, savedCity] = await Promise.all([
-          supabase.getLatestUserNameForToday(userPhone),
-          supabase.getLatestUserCityForToday(userPhone)
-        ]);
-        if (savedName) userSession.userName = savedName;
-        if (savedCity) userSession.userCity = savedCity;
-      } catch (err) {}
     }
 
     const isSummaryRequested = config.summaryTriggers.some(t => normalizedTranscription.includes(t));
@@ -396,15 +412,14 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    if (!finalAnswerText) finalAnswerText = "הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
+    if (!finalAnswerText) finalAnswerText = "אני לא יכול לענות כרגע הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
 
-    // שמירת השיחה ל-Supabase ברקע (כולל שם ועיר)
     supabase.logConversation(userPhone, transcribedText, finalAnswerText, usedModelName, userSession.userName, userSession.userCity).catch(() => {});
 
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
       const success = await downloadAndUploadToYemot(songTarget, token, "3");
-      return success ? sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3") : sendYemotTtsResponse(res, "מצטער לא הצלחתי להוריד את השיר");
+      return success ? sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3") : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער");
     }
 
     if (normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
@@ -424,7 +439,7 @@ const handleAudioRequest = async (req, res) => {
 
     return sendYemotTtsResponse(res, finalAnswerText);
   } catch (error) {
-    return sendYemotTtsResponse(res, "חלה שגיאה במערכת אנא נסה שנית");
+    return sendYemotTtsResponse(res, "אני מתנחל חלה שגיאה במערכת אנא נסה שנית");
   }
 };
 
