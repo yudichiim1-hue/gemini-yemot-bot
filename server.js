@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי (גרסת סוכן קולי מאובטח + Supabase)
+// 🚀 קובץ השרת הראשי (כולל ElevenLabs TTS + Supabase)
 // ==========================================
 
 const express = require("express");
@@ -70,6 +70,7 @@ const normalizeText = (text) => {
     .trim();
 };
 
+// פונקציית TTS מקורית של ימות המשיח (לשימוש בגיבוי / הודעות מערכת מהירות אם נדרש)
 function sendYemotTtsResponse(res, text, nextFolder = "1") {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
@@ -78,6 +79,55 @@ function sendYemotTtsResponse(res, text, nextFolder = "1") {
     .trim();
   res.set("Content-Type", "text/plain; charset=utf-8");
   return res.send(`id_list_message=t-${clean}&go_to_folder=/${nextFolder}`);
+}
+
+// פונקציה להשמעת קובץ שמע מוכן מימות המשיח
+function sendYemotFileResponse(res, folderNumber, fileName = "000", nextFolder = "1") {
+  res.set("Content-Type", "text/plain; charset=utf-8");
+  return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${nextFolder}`);
+}
+
+// פונקציה להמרת טקסט לדיבור דרך ElevenLabs והעלאתו לימות המשיח
+async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "3") {
+  const tempFilePath = path.join(__dirname, `temp_tts_${Date.now()}.mp3`);
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // קול ברירת מחדל (Rachel) או מותאם אישית
+  
+  try {
+    const ttsRes = await axios.post(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+      {
+        text: text,
+        model_id: "eleven_multilingual_v2",
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75
+        }
+      },
+      {
+        headers: {
+          "xi-api-key": elevenLabsApiKey,
+          "Content-Type": "application/json"
+        },
+        responseType: "arraybuffer",
+        timeout: 15000
+      }
+    );
+
+    fs.writeFileSync(tempFilePath, Buffer.from(ttsRes.data));
+
+    const form = new FormData();
+    form.append("file", fs.createReadStream(tempFilePath));
+    const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
+
+    await axios.post(uploadUrl, form, { headers: form.getHeaders(), timeout: 15000 });
+    
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    return true;
+  } catch (err) {
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    console.error("❌ ElevenLabs TTS upload error:", err.response?.data?.toString() || err.message);
+    return false;
+  }
 }
 
 const callGeminiSimple = async (model, payload, geminiApiKey) => {
@@ -136,7 +186,6 @@ const handleAudioRequest = async (req, res) => {
     if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר");
     if (!checkRateLimit(userPhone)) return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר");
 
-    // בדיקה האם המשתמש חסום מול מסד הנתונים
     const isBanned = !isAdminUser && await supabase.isUserBanned(userPhone);
     if (isBanned) {
       return sendYemotTtsResponse(res, config.bannedUserResponse);
@@ -164,6 +213,7 @@ const handleAudioRequest = async (req, res) => {
     const parsedOpenAIKeys = new Set([process.env.OPENAI_API_KEY, process.env.OPENAI_API_KEY_1].filter(Boolean));
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
+    let parsedElevenLabs = process.env.ELEVENLABS_API_KEY || "";
 
     const directGemini = params.GEMINI_API_KEY || params.gemini_key || params.GeminiKey || params.AI_KEY || params.API || params.Api || params.api || params.KEY || params.Key || params.key || params.GEMINI;
     if (directGemini) parsedGeminiKeys.add(String(directGemini).trim());
@@ -177,6 +227,9 @@ const handleAudioRequest = async (req, res) => {
     const directDeepgram = params.DEEPGRAM || params.deepgram || params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey;
     if (directDeepgram) parsedDeepgram = String(directDeepgram).trim();
 
+    const directElevenLabs = params.ELEVENLABS || params.elevenlabs || params.ELEVENLABS_API_KEY || params.elevenlabs_key || params.ElevenLabsKey;
+    if (directElevenLabs) parsedElevenLabs = String(directElevenLabs).trim();
+
     const extractKeysDeeply = (obj, depth = 0) => {
       if (depth > 5 || !obj) return;
       for (const value of Object.values(obj)) {
@@ -188,6 +241,7 @@ const handleAudioRequest = async (req, res) => {
               if (part.startsWith("AIza") || part.startsWith("AQ.")) parsedGeminiKeys.add(part);
               else if (part.startsWith("sk-proj-") || (part.startsWith("sk-") && !part.startsWith("sk-or-"))) parsedOpenAIKeys.add(part);
               else if (part.startsWith("sk-or-")) parsedOpenRouterKeys.add(part);
+              else if (part.startsWith("xi-")) parsedElevenLabs = part;
               else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) parsedDeepgram = part;
             }
           } else if (typeof item === "object" && item !== null) extractKeysDeeply(item, depth + 1);
@@ -200,6 +254,7 @@ const handleAudioRequest = async (req, res) => {
     const openAIKeys = Array.from(parsedOpenAIKeys);
     const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
+    const elevenLabsApiKey = parsedElevenLabs.trim();
 
     let audioBuffer = null;
     const possiblePaths = [params.path, params.Path, params.file, params.File, params.ApiPath, `ivr2:/${secondaryFolder}/last.wav`, `ivr2:/${primaryFolder}/last.wav`].filter(Boolean);
@@ -239,21 +294,18 @@ const handleAudioRequest = async (req, res) => {
     // 👑 ניהול מצב מנהל
     // ==========================================
 
-    // 1. יציאה ממצב מנהל
     if (userSession.isAdminAuthenticated && config.adminLogoutTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.isAdminAuthenticated = false;
       conversationHistory.set(userPhone, userSession);
       return sendYemotTtsResponse(res, "יצאת ממצב מנהל בהצלחה במה עוד אוכל לעזור");
     }
 
-    // 2. בקשת כניסה למצב מנהל
     if (!userSession.isAdminAuthenticated && !userSession.awaitingAdminPassword && config.adminLoginTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.awaitingAdminPassword = true;
       conversationHistory.set(userPhone, userSession);
       return sendYemotTtsResponse(res, "נא הקלד את סיסמת הניהול");
     }
 
-    // 3. אימות סיסמה
     if (userSession.awaitingAdminPassword) {
       userSession.awaitingAdminPassword = false;
       
@@ -276,9 +328,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // 4. פעולות מנהל מאומת
     if (userSession.isAdminAuthenticated) {
-      // א. חסימת מספר טלפון
       if (normalizedTranscription.includes("חסום") || normalizedTranscription.includes("תחסום")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
@@ -293,7 +343,6 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ב. ביטול חסימה למספר טלפון
       if (normalizedTranscription.includes("שחרר") || normalizedTranscription.includes("בטל חסימה") || normalizedTranscription.includes("הסר חסימה")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
@@ -305,7 +354,6 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ג. הקראת הלוגים האחרונים במערכת
       if (normalizedTranscription.includes("לוגים") || normalizedTranscription.includes("פעילות") || normalizedTranscription.includes("לוג")) {
         try {
           const recentLogs = await supabase.getAllSystemConversationsForToday();
@@ -323,7 +371,6 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ד. שליפת 3 שאלות ותשובות לפי 4 ספרות
       let digitsOnly = transcribedText.replace(/\D/g, "");
       const wordToNumMap = { "אפס": "0", "אחת": "1", "שתיים": "2", "שלוש": "3", "ארבע": "4", "חמש": "5", "שש": "6", "שבע": "7", "שמונה": "8", "תשע": "9" };
       if (digitsOnly.length === 0) {
@@ -571,7 +618,7 @@ const handleAudioRequest = async (req, res) => {
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
       const success = await downloadAndUploadToYemot(songTarget, token, "3");
-      return success ? sendYemotTtsResponse(res, "השיר מוכן מעביר אותך לשלוחת השירים", "3") : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער");
+      return success ? sendYemotFileResponse(res, "3", "000", "3") : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער");
     }
 
     if (!isAdminUser && !userSession.isAdminAuthenticated && normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
@@ -589,7 +636,20 @@ const handleAudioRequest = async (req, res) => {
     if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
     conversationHistory.set(userPhone, userSession);
 
+    // ==========================================
+    // 🎙️ הפעלת ElevenLabs TTS והשמעה דרך ימות המשיח
+    // ==========================================
+    if (elevenLabsApiKey) {
+      const ttsSuccess = await generateAndUploadElevenLabsTts(finalAnswerText, token, elevenLabsApiKey, "3");
+      if (ttsSuccess) {
+        // השמעת קובץ ה-000 שהועלה מתיקייה 3
+        return sendYemotFileResponse(res, "3", "000", "1");
+      }
+    }
+
+    // גיבוי: אם אין מפתח אילבן לבס או שההעלאה נכשלה, חזור ל-TTS רגיל של ימות המשיח
     return sendYemotTtsResponse(res, finalAnswerText);
+
   } catch (error) {
     return sendYemotTtsResponse(res, "אני מתנצל חלה שגיאה במערכת אנא נסה שנית");
   }
