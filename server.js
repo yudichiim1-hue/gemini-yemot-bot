@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי (כולל ElevenLabs TTS + Supabase)
+// 🚀 קובץ השרת הראשי (כולל ElevenLabs TTS מדויק + Supabase)
 // ==========================================
 
 const express = require("express");
@@ -87,14 +87,17 @@ function sendYemotFileResponse(res, folderNumber, fileName = "000", nextFolder =
   return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${nextFolder}`);
 }
 
-// פונקציה להמרת טקסט לדיבור דרך ElevenLabs והעלאתו לימות המשיח
+// פונקציה להמרת טקסט לדיבור דרך ElevenLabs והעלאתו לימות המשיח (עם פורמט אופטימלי ולוגים מלאים)
 async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "3") {
   const tempFilePath = path.join(__dirname, `temp_tts_${Date.now()}.mp3`);
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // קול ברירת מחדל (Rachel) או מותאם אישית
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // קול Adam הרשמי
+  
+  console.log(`🎙️ [TTS] מתחיל ייצור שמע באילבן לבס (קול: ${voiceId}), אורך טקסט: ${text.length} תווים...`);
   
   try {
+    // שימוש בפורמט MP3 מותאם לימות המשיח (22kHz, 32kbps)
     const ttsRes = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_22050_32`,
       {
         text: text,
         model_id: "eleven_multilingual_v2",
@@ -113,19 +116,22 @@ async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, tar
       }
     );
 
+    console.log(`✅ [TTS] קובץ MP3 התקבל בהצלחה מאילבן לבס (גודל: ${ttsRes.data.length} בתים). שומר מקומית...`);
     fs.writeFileSync(tempFilePath, Buffer.from(ttsRes.data));
 
+    console.log(`📤 [Yemot] מעלה את הקובץ לשרתי ימות המשיח לתיקייה ${targetFolder} (000.mp3)...`);
     const form = new FormData();
     form.append("file", fs.createReadStream(tempFilePath));
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
 
-    await axios.post(uploadUrl, form, { headers: form.getHeaders(), timeout: 15000 });
-    
+    const uploadRes = await axios.post(uploadUrl, form, { headers: form.getHeaders(), timeout: 15000 });
+    console.log(`📥 [Yemot] תגובת שרת ימות המשיח להעלאה:`, uploadRes.data);
+
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return true;
   } catch (err) {
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    console.error("❌ ElevenLabs TTS upload error:", err.response?.data?.toString() || err.message);
+    console.error("❌ [Error] שגיאה בתהליך אילבן לבס / ימות המשיח:", err.response?.data?.toString() || err.message);
     return false;
   }
 }
