@@ -1,8 +1,11 @@
+// ==========================================
+// 🗄️ קובץ חיבור ופעולות מול Supabase
+// ==========================================
+
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 
-// הסרת סלאש מיותר בסוף הכתובת למניעת כפילות
-const SUPABASE_URL = (process.env.SUPABASE_URL || "https://huxqndiiksdgnxcmmmmz.supabase.co/rest/v1").replace(/\/+$/, "");
-const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || "sb_publishable_ocXPjtF1EPDgoX5LdLHRkw_vKdENtfp";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://huxqndiiksdgnxcmmmmz.supabase.co/rest/v1/";
+const SUPABASE_KEY = process.env.SUPABASE_KEY || "sb_publishable_ocXPjtF1EPDgoX5LdLHRkw_vKdENtfp";
 
 const supabase = {
   // רישום שיחה חדשה במסד הנתונים עם דיבוג שגיאות מלא
@@ -12,8 +15,7 @@ const supabase = {
       return;
     }
     try {
-      const endpoint = `${SUPABASE_URL}/conversation_logs`;
-      await axios.post(endpoint, {
+      await axios.post(`${SUPABASE_URL}/conversation_logs`, {
         phone: phone || "unknown",
         question: question || "",
         answer: answer || "",
@@ -35,6 +37,61 @@ const supabase = {
     }
   },
 
+  // בדיקה האם מספר טלפון חסום במסד הנתונים
+  async isUserBanned(phone) {
+    if (!SUPABASE_URL || !SUPABASE_KEY || !phone) return false;
+    try {
+      const response = await axios.get(`${SUPABASE_URL}/banned_users?phone=eq.${phone}&limit=1`, {
+        headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
+        timeout: 5000
+      });
+      return response.data && response.data.length > 0;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // הוספת מספר טלפון לרשימת החסומים במסד הנתונים
+  async banUser(phone, reason = "חריגה מכללי השימוש") {
+    if (!SUPABASE_URL || !SUPABASE_KEY || !phone) return false;
+    try {
+      await axios.post(`${SUPABASE_URL}/banned_users`, {
+        phone: phone,
+        reason: reason
+      }, {
+        headers: {
+          "apikey": SUPABASE_KEY,
+          "Authorization": `Bearer ${SUPABASE_KEY}`,
+          "Content-Type": "application/json",
+          "Prefer": "resolution=merge-duplicates"
+        },
+        timeout: 5000
+      });
+      return true;
+    } catch (err) {
+      console.error("❌ Error banning user:", err.response?.data || err.message);
+      return false;
+    }
+  },
+
+  // הסרת חסימה ממספר טלפון
+  async unbanUser(phone) {
+    if (!SUPABASE_URL || !SUPABASE_KEY || !phone) return false;
+    try {
+      await axios.delete(`${SUPABASE_URL}/banned_users?phone=eq.${phone}`, {
+        headers: {
+          "apikey": SUPABASE_KEY,
+          "Authorization": `Bearer ${SUPABASE_KEY}`
+        },
+        timeout: 5000
+      });
+      return true;
+    } catch (err) {
+      console.error("❌ Error unbanning user:", err.response?.data || err.message);
+      return false;
+    }
+  },
+
   // שליפת השיחה האחרונה להיום עבור מספר ספציפי
   async getLatestConversationForToday(phone) {
     if (!SUPABASE_URL || !SUPABASE_KEY || !phone) return null;
@@ -42,14 +99,12 @@ const supabase = {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
       
-      const endpoint = `${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.desc&limit=1`;
-      const response = await axios.get(endpoint, {
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.desc&limit=1`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
       });
       return response.data && response.data.length > 0 ? response.data[0] : null;
     } catch (err) {
-      console.error("❌ Supabase getLatest error:", err.response?.data || err.message);
       return null;
     }
   },
@@ -61,14 +116,12 @@ const supabase = {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      const endpoint = `${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.asc`;
-      const response = await axios.get(endpoint, {
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&order=id.asc`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
       });
       return response.data || [];
     } catch (err) {
-      console.error("❌ Supabase getAllToday error:", err.response?.data || err.message);
       return [];
     }
   },
@@ -77,14 +130,12 @@ const supabase = {
   async getAllSystemConversationsForToday() {
     if (!SUPABASE_URL || !SUPABASE_KEY) return [];
     try {
-      const endpoint = `${SUPABASE_URL}/conversation_logs?order=id.desc&limit=10`;
-      const response = await axios.get(endpoint, {
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?order=id.desc&limit=10`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
       });
       return response.data || [];
     } catch (err) {
-      console.error("❌ Supabase getSystemLogs error:", err.response?.data || err.message);
       return [];
     }
   },
@@ -93,8 +144,7 @@ const supabase = {
   async getConversationsByLast4Digits(last4) {
     if (!SUPABASE_URL || !SUPABASE_KEY || !last4) return [];
     try {
-      const endpoint = `${SUPABASE_URL}/conversation_logs?order=id.desc&limit=50`;
-      const response = await axios.get(endpoint, {
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?order=id.desc&limit=50`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
       });
@@ -103,7 +153,6 @@ const supabase = {
       const matched = allLogs.filter(item => item.phone && String(item.phone).endsWith(last4));
       return matched.slice(0, 3);
     } catch (err) {
-      console.error("❌ Supabase 4Digits error:", err.response?.data || err.message);
       return [];
     }
   },
@@ -115,8 +164,7 @@ const supabase = {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      const endpoint = `${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_name=not.is.null&order=id.desc&limit=1`;
-      const response = await axios.get(endpoint, {
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_name=not.is.null&order=id.desc&limit=1`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
       });
@@ -133,12 +181,11 @@ const supabase = {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      const endpoint = `${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_city=not.is.null&order=id.desc&limit=1`;
-      const response = await endpoint ? axios.get(endpoint, {
+      const response = await axios.get(`${SUPABASE_URL}/conversation_logs?phone=eq.${phone}&created_at=gte.${todayStart.toISOString()}&user_city=not.is.null&order=id.desc&limit=1`, {
         headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` },
         timeout: 5000
-      }) : null;
-      return response && response.data && response.data.length > 0 ? response.data[0].user_city : null;
+      });
+      return response.data && response.data.length > 0 ? response.data[0].user_city : null;
     } catch (err) {
       return null;
     }
