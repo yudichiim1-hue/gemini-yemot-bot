@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי המלא (Edge-TTS חינמי בעברית ישירות מהקוד + המרת WAV טלפונית לימות המשיח)
+// 🚀 קובץ השרת הראשי המלא (Google TTS חינמי בעברית + המרת WAV טלפונית לימות המשיח)
 // ==========================================
 
 const express = require("express");
@@ -8,7 +8,6 @@ const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
 const ffmpeg = require("fluent-ffmpeg");
-const { EdgeTTS } = require("node-edge-tts");
 
 const config = require("./config");
 const prompts = require("./prompts");
@@ -108,29 +107,30 @@ function convertToYemotWav(inputPath, outputPath) {
   });
 }
 
-// 🎙️ פונקציית Edge-TTS ישירה ובטוחה מתוך קוד ה-Node בעברית טבעית (Hila)
-async function generateAndUploadEdgeTts(text, token, targetFolder = "1") {
+// 🎙️ פונקציית Google TTS חינמית לחלוטין ויציבה ב-Render, המרה ל-WAV טלפוני והעלאה לשלוחה 1
+async function generateAndUploadGoogleTts(text, token, targetFolder = "1") {
   const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const rawFilePath = path.join(__dirname, `temp_raw_${uniqueId}.mp3`);
   const convertedFilePath = path.join(__dirname, `temp_converted_${uniqueId}.wav`);
 
-  const safeText = String(text || "").replace(/[\r\n]+/g, " ").trim();
-
-  console.log(`🎙️ [Edge-TTS] מתחיל ייצור שמע בעברית דרך קוד, אורך טקסט: ${safeText.length} תווים...`);
+  const safeText = String(text || "").trim();
+  console.log(`🎙️ [Google-TTS] מתחיל ייצור שמע בעברית, אורך טקסט: ${safeText.length} תווים...`);
 
   try {
-    const tts = new EdgeTTS();
-    await tts.ttsPromise(safeText, rawFilePath, {
-      voice: "he-IL-HilaNeural",
-      lang: "he-IL",
-      outputFormat: "audio-24khz-48kbitrate-mono-mp3"
+    const googleTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(safeText)}&tl=he&client=tw-ob`;
+    
+    const response = await axios.get(googleTtsUrl, {
+      responseType: "arraybuffer",
+      headers: { "User-Agent": "Mozilla/5.0" },
+      timeout: 15000
     });
 
-    if (!fs.existsSync(rawFilePath) || fs.statSync(rawFilePath).size === 0) {
-      throw new Error("Edge-TTS generated an empty audio file");
+    if (!response.data || response.data.byteLength === 0) {
+      throw new Error("Google TTS returned an empty audio file");
     }
 
-    console.log("✅ [Edge-TTS] התקבל MP3. ממיר ל-WAV טלפוני PCM 16-bit, mono, 8000Hz...");
+    fs.writeFileSync(rawFilePath, Buffer.from(response.data));
+    console.log("✅ [Google-TTS] התקבל MP3. ממיר ל-WAV טלפוני PCM 16-bit, mono, 8000Hz...");
 
     await convertToYemotWav(rawFilePath, convertedFilePath);
 
@@ -173,14 +173,14 @@ async function generateAndUploadEdgeTts(text, token, targetFolder = "1") {
     console.log(`✅ [Yemot] קובץ WAV הועלה בהצלחה: ${uploadRes.data.path || uploadPath}`);
     return true;
   } catch (err) {
-    console.error("❌ [Edge-TTS] שגיאה ביצירה / המרה / העלאה:", err.message || err);
+    console.error("❌ [Google-TTS] שגיאה ביצירה / המרה / העלאה:", err.message || err);
     return false;
   } finally {
     for (const filePath of [rawFilePath, convertedFilePath]) {
       try {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       } catch (cleanupError) {
-        console.warn("⚠️ [Edge-TTS] לא הצלחתי למחוק קובץ זמני:", cleanupError.message);
+        console.warn("⚠️ [Google-TTS] לא הצלחתי למחוק קובץ זמני:", cleanupError.message);
       }
     }
   }
@@ -759,9 +759,9 @@ const handleAudioRequest = async (req, res) => {
     conversationHistory.set(userPhone, userSession);
 
     // ==========================================
-    // 🎙️ הפעלת Edge-TTS והעלאה לשלוחה 1
+    // 🎙️ הפעלת Google-TTS והעלאה לשלוחה 1
     // ==========================================
-    const ttsSuccess = await generateAndUploadEdgeTts(finalAnswerText, token, "1");
+    const ttsSuccess = await generateAndUploadGoogleTts(finalAnswerText, token, "1");
     if (ttsSuccess) {
       return sendYemotFileResponse(res, "1", "000", targetReturnFolder);
     }
