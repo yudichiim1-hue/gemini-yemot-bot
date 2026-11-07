@@ -86,9 +86,9 @@ function sendYemotTtsResponse(res, text, returnFolder = "1") {
 // 🟢 הפקודה המרכזית: השמעת קובץ מוכן מימות המשיח (חובה להשמעת קול איכותי)
 function sendYemotFileResponse(res, folderNumber = "1", fileName = "000", returnFolder = "1") {
   res.set("Content-Type", "text/plain; charset=utf-8");
-  // ננסה פקודה ישירה ללא ציון התיקייה בפקודת ה-f אלא רק שם הקובץ, כיוון שהקובץ הועלה ישירות לשלוחה
-  console.log(`🟢 [Response] שולח פקודת קובץ מעודכנת לימות: f-${fileName}`);
-  return res.send(`id_list_message=f-${fileName}&go_to_folder=/${returnFolder}`);
+  // מחזירים את ציון התיקייה המפורש 1/000 כדי שהמערכת תדע לשלוף אותו משלוחה 1
+  console.log(`🟢 [Response] שולח פקודת השמעת קובץ לימות המשיח: f-${folderNumber}/${fileName}`);
+  return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${returnFolder}`);
 }
 
 // פונקציה להמרת טקסט לדיבור דרך ElevenLabs, המרה תקנית עם FFmpeg, והעלאה לשלוחה 1
