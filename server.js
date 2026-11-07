@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי (שמירה וקריאה ישירות משלוחה 1 ו-2 + ElevenLabs)
+// 🚀 קובץ השרת הראשי (שימוש ישיר בקובץ שמע משלוחה 1 + ElevenLabs)
 // ==========================================
 
 const express = require("express");
@@ -70,7 +70,7 @@ const normalizeText = (text) => {
     .trim();
 };
 
-// פונקציית TTS מקורית של ימות המשיח (מחזירה תמיד לשלוחה 1)
+// פונקציית גיבוי להקראת טקסט של ימות המשיח (למקרה שאין הקלטה או שגיאה)
 function sendYemotTtsResponse(res, text, returnFolder = "1") {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
@@ -78,12 +78,14 @@ function sendYemotTtsResponse(res, text, returnFolder = "1") {
     .replace(/\s+/g, " ")
     .trim();
   res.set("Content-Type", "text/plain; charset=utf-8");
+  console.log(`🟡 [Response] שולח פקודת הקראת טקסט לימות המשיח (גיבוי): t-${clean}`);
   return res.send(`id_list_message=t-${clean}&go_to_folder=/${returnFolder}`);
 }
 
-// פונקציה להשמעת קובץ שמע מוכן מימות המשיח (ישירות משלוחה 1)
+// 🟢 הפקודה המרכזית: השמעת קובץ מוכן מימות המשיח (חובה להשמעת קול איכותי)
 function sendYemotFileResponse(res, folderNumber = "1", fileName = "000", returnFolder = "1") {
   res.set("Content-Type", "text/plain; charset=utf-8");
+  console.log(`🟢 [Response] שולח פקודת השמעת קובץ שמע לימות המשיח: f-${folderNumber}/${fileName} וחוזר לשלוחה /${returnFolder}`);
   return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${returnFolder}`);
 }
 
@@ -264,7 +266,6 @@ const handleAudioRequest = async (req, res) => {
     const elevenLabsApiKey = parsedElevenLabs.trim();
 
     let audioBuffer = null;
-    // 🔍 סדר חיפוש ההקלטה: קודם כל שלוחה 1 ואז שלוחה 2 ואז שאר האפשרויות
     const possiblePaths = [`ivr2:/1/last.wav`, `ivr2:/2/last.wav`, params.path, params.Path, params.file, params.File, params.ApiPath, `ivr2:/${secondaryFolder}/last.wav`, `ivr2:/${primaryFolder}/last.wav`].filter(Boolean);
 
     for (let rawPath of possiblePaths) {
@@ -650,12 +651,12 @@ const handleAudioRequest = async (req, res) => {
     if (elevenLabsApiKey) {
       const ttsSuccess = await generateAndUploadElevenLabsTts(finalAnswerText, token, elevenLabsApiKey, "1");
       if (ttsSuccess) {
-        // מנגן את הקובץ ישירות מתוך שלוחה 1 ונשאר בה
+        // 🟢 שולח פקודת קובץ שמע מובהקת (f-1/000)
         return sendYemotFileResponse(res, "1", "000", targetReturnFolder);
       }
     }
 
-    // גיבוי: חזרה ל-TTS של ימות בשלוחה 1
+    // גיבוי למקרה שאין ElevenLabs: חזרה ל-TTS של ימות בשלוחה 1
     return sendYemotTtsResponse(res, finalAnswerText, targetReturnFolder);
 
   } catch (error) {
