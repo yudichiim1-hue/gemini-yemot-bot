@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי המלא (Google TTS חינמי בעברית + המרת WAV טלפונית לימות המשיח)
+// 🚀 קובץ השרת הראשי המלא (Google TTS + לוגים מפורטים למעקב אחר מודלי AI)
 // ==========================================
 
 const express = require("express");
@@ -366,6 +366,9 @@ const handleAudioRequest = async (req, res) => {
     const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
 
+    // 🔍 לוג מצב מפתחות ה-AI שזוהו בבקשה
+    console.log(`🔑 [AI Keys Check] Gemini keys: ${geminiKeys.length} | OpenAI keys: ${openAIKeys.length} | OpenRouter keys: ${openRouterKeys.length} | Deepgram: ${deepgramApiKey ? "Yes" : "No"}`);
+
     let audioBuffer = null;
     const possiblePaths = [
       `ivr2:/1/last.wav`, 
@@ -410,6 +413,7 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotTtsResponse(res, userSession.language === "en" ? "Please speak clearly" : "אנא דבר יותר לאט וברור", targetReturnFolder);
     }
 
+    console.log(`🗣️ [STT] טקסט מתומלל: "${transcribedText}"`);
     const normalizedTranscription = normalizeText(transcribedText);
 
     // ==========================================
@@ -450,105 +454,8 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    if (userSession.isAdminAuthenticated) {
-      if (normalizedTranscription.includes("חסום") || normalizedTranscription.includes("תחסום")) {
-        const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
-        const targetPhone = phoneMatch ? phoneMatch[0] : null;
-        if (targetPhone) {
-          if (targetPhone === ADMIN_PHONE) {
-            return sendYemotTtsResponse(res, "לא ניתן לחסום את מספר המנהל הראשי", targetReturnFolder);
-          }
-          await supabase.banUser(targetPhone, "חסימה ידנית על ידי מנהל");
-          return sendYemotTtsResponse(res, `המספר ${targetPhone} נחסם בהצלחה מהמערכת`, targetReturnFolder);
-        } else {
-          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לחסימה אנא אמור שוב", targetReturnFolder);
-        }
-      }
-
-      if (normalizedTranscription.includes("שחרר") || normalizedTranscription.includes("בטל חסימה") || normalizedTranscription.includes("הסר חסימה")) {
-        const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
-        const targetPhone = phoneMatch ? phoneMatch[0] : null;
-        if (targetPhone) {
-          await supabase.unbanUser(targetPhone);
-          return sendYemotTtsResponse(res, `החסימה עבור המספר ${targetPhone} בוטלה בהצלחה`, targetReturnFolder);
-        } else {
-          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לביטול חסימה", targetReturnFolder);
-        }
-      }
-
-      if (normalizedTranscription.includes("לוגים") || normalizedTranscription.includes("פעילות") || normalizedTranscription.includes("לוג")) {
-        try {
-          const recentLogs = await supabase.getAllSystemConversationsForToday();
-          if (recentLogs && recentLogs.length > 0) {
-            let logText = "הפעילויות האחרונות במערכת . ";
-            recentLogs.slice(0, 3).forEach((item) => {
-              logText += `משתמש ${item.phone} שאל: ${item.question} וענה לו: ${item.answer} . `;
-            });
-            return sendYemotTtsResponse(res, logText, targetReturnFolder);
-          } else {
-            return sendYemotTtsResponse(res, "אין פעילות רשומה במערכת", targetReturnFolder);
-          }
-        } catch (err) {
-          return sendYemotTtsResponse(res, "שגיאה בשליפת הלוגים האחרונים", targetReturnFolder);
-        }
-      }
-
-      let digitsOnly = transcribedText.replace(/\D/g, "");
-      const wordToNumMap = { "אפס": "0", "אחת": "1", "שתיים": "2", "שלוש": "3", "ארבע": "4", "חמש": "5", "שש": "6", "שבע": "7", "שמונה": "8", "תשע": "9" };
-      if (digitsOnly.length === 0) {
-        for (const [word, num] of Object.entries(wordToNumMap)) {
-          if (transcribedText.includes(word)) digitsOnly += num;
-        }
-      }
-
-      const isOnlyFourDigits = /^\d{4}$/.test(digitsOnly) || transcribedText.replace(/\D/g, "").length === 4;
-
-      if (normalizedTranscription.includes("שאלות") || normalizedTranscription.includes("תשובות") || normalizedTranscription.includes("היסטוריה") || normalizedTranscription.includes("שיחות") || isOnlyFourDigits) {
-        const fullPhoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
-        const fourDigitsMatch = isOnlyFourDigits ? [transcribedText.replace(/\D/g, "").slice(-4)] : transcribedText.match(/\b\d{4}\b/);
-
-        if (fullPhoneMatch) {
-          const targetPhone = fullPhoneMatch[0];
-          try {
-            const allLogs = await supabase.getAllConversationsForToday(targetPhone);
-            if (allLogs && allLogs.length > 0) {
-              const lastConvs = allLogs.slice(-3);
-              let responseText = `נמצאו שיחות עבור המספר ${targetPhone} . `;
-              lastConvs.forEach((item, index) => {
-                responseText += `שיחה ${index + 1} . שאלה: ${item.question || "ללא"} . תשובה: ${item.answer || "ללא"} . `;
-              });
-              return sendYemotTtsResponse(res, responseText, targetReturnFolder);
-            } else {
-              return sendYemotTtsResponse(res, `לא נמצאו שיחות עבור המספר ${targetPhone}`, targetReturnFolder);
-            }
-          } catch (err) {
-            return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים ממסד הנתונים", targetReturnFolder);
-          }
-        } else if (fourDigitsMatch || digitsOnly.length >= 4) {
-          const last4 = fourDigitsMatch ? fourDigitsMatch[0] : digitsOnly.slice(-4);
-          try {
-            const matchedLogs = await supabase.getConversationsByLast4Digits(last4);
-            if (matchedLogs && matchedLogs.length > 0) {
-              const lastConvs = matchedLogs.slice(0, 3);
-              let responseText = `נמצאו שיחות עבור מספר המסתיים ב ${last4} . `;
-              lastConvs.forEach((item, index) => {
-                responseText += `שיחה ${index + 1} של משתמש ${item.phone} . שאלה: ${item.question || "ללא"} . תשובה: ${item.answer || "ללא"} . `;
-              });
-              return sendYemotTtsResponse(res, responseText, targetReturnFolder);
-            } else {
-              return sendYemotTtsResponse(res, `לא נמצאו שיחות עבור מספר המסתיים ב ${last4}`, targetReturnFolder);
-            }
-          } catch (err) {
-            return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים לפי 4 ספרות", targetReturnFolder);
-          }
-        } else {
-          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון או ארבע ספרות אנא אמור שוב", targetReturnFolder);
-        }
-      }
-    }
-
     // ==========================================
-    // 🤖 המשך זרימה רגילה
+    // 🤖 המשך זרימה רגילה ומנועי AI עם לוגים מלאים
     // ==========================================
 
     if (config.switchToEnglishTriggers.some(t => normalizedTranscription.includes(t))) {
@@ -563,12 +470,6 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotTtsResponse(res, "עברנו חזרה לעברית במה אוכל לעזור", targetReturnFolder);
     }
 
-    if (config.personaTriggers.some(t => normalizedTranscription.includes(t))) {
-      userSession.persona = transcribedText;
-      conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`, targetReturnFolder);
-    }
-
     if (!userSession.checkedSupabaseToday) {
       userSession.checkedSupabaseToday = true;
       try {
@@ -579,55 +480,6 @@ const handleAudioRequest = async (req, res) => {
         if (savedName) userSession.userName = savedName;
         if (savedCity) userSession.userCity = savedCity;
       } catch (err) {}
-    }
-
-    if (config.nameTriggers.some(t => normalizedTranscription.includes(t))) {
-      const wantsToChangeName = config.changeNameTriggers.some(cnt => normalizedTranscription.includes(cnt));
-      if (!userSession.userName || wantsToChangeName) {
-        let extractedName = transcribedText;
-        for (const cnt of config.changeNameTriggers) {
-          extractedName = extractedName.replace(new RegExp(cnt, "i"), "").trim();
-        }
-        for (const t of config.nameTriggers) {
-          extractedName = extractedName.replace(new RegExp(t, "i"), "").trim();
-        }
-        if (extractedName) {
-          userSession.userName = extractedName;
-          conversationHistory.set(userPhone, userSession);
-          supabase.logConversation(userPhone, transcribedText, `נעים מאוד ${extractedName}`, "system-name", extractedName, userSession.userCity).catch(() => {});
-          return sendYemotTtsResponse(res, `נעים מאוד ${extractedName} מעכשיו אזכור אותך במה אוכל לעזור`, targetReturnFolder);
-        }
-      }
-    }
-
-    if (config.cityTriggers.some(t => normalizedTranscription.includes(t))) {
-      const wantsToChangeCity = config.changeCityTriggers.some(ct => normalizedTranscription.includes(ct));
-      if (!userSession.userCity || wantsToChangeCity) {
-        let extractedCity = transcribedText;
-        for (const ct of config.changeCityTriggers) {
-          extractedCity = extractedCity.replace(new RegExp(ct, "i"), "").trim();
-        }
-        for (const t of config.cityTriggers) {
-          extractedCity = extractedCity.replace(new RegExp(t, "i"), "").trim();
-        }
-        if (extractedCity) {
-          userSession.userCity = extractedCity;
-          conversationHistory.set(userPhone, userSession);
-          supabase.logConversation(userPhone, transcribedText, `רשמתי שאתה מ${extractedCity}`, "system-city", userSession.userName, extractedCity).catch(() => {});
-          return sendYemotTtsResponse(res, `מעולה רשמתי שאתה מ${extractedCity} במה עוד אוכל לעזור`, targetReturnFolder);
-        }
-      }
-    }
-
-    if (!isAdminUser && !userSession.isAdminAuthenticated && config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
-      userSession.blockedAttempts += 1;
-      if (userSession.blockedAttempts >= 3) {
-        await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, config.bannedUserResponse, targetReturnFolder);
-      }
-      userSession.lastActive = Date.now();
-      conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, config.getWarningMessage(userSession.blockedAttempts), targetReturnFolder);
     }
 
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
@@ -672,7 +524,9 @@ const handleAudioRequest = async (req, res) => {
     );
     const needsSearch = config.searchKeywords.some(word => transcribedText.toLowerCase().includes(word));
 
+    // 1️⃣ ניסיון ראשון: Gemini
     if (geminiKeys.length > 0) {
+      console.log("🤖 [AI] מנסה פנייה למנוע Gemini...");
       const geminiModels = requestedModel ? [requestedModel, "gemini-2.5-flash-lite", "gemini-2.5-flash"] : ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
       const geminiContents = [
         { role: "user", parts: [{ text: systemInstruction }] },
@@ -688,21 +542,30 @@ const handleAudioRequest = async (req, res) => {
         if (finalAnswerText) break;
         for (const model of geminiModels) {
           try {
+            console.log(`🤖 [Gemini] מנסה מודל ${model} עם מפתח מספר ${k + 1}...`);
             const response = await callGeminiSimple(model, payload, geminiKeys[k]);
             if (response?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
               finalAnswerText = response.data.candidates[0].content.parts[0].text;
               usedModelName = `gemini (${model})`;
+              console.log(`✅ [Gemini] הצלחה! התקבלה תשובה ממודל ${model}`);
               break;
             }
-          } catch (err) {}
+          } catch (err) {
+            console.warn(`⚠️ [Gemini] נכשל במודל ${model} (מפתח ${k + 1}):`, err.response?.data?.error?.message || err.message);
+          }
         }
       }
+    } else {
+      console.log("ℹ️ [Gemini] מדלג: לא נמצאו מפתחות Gemini פעילים.");
     }
 
+    // 2️⃣ ניסיון גיבוי: OpenAI
     if (!finalAnswerText && openAIKeys.length > 0) {
+      console.log("🤖 [AI] Gemini נכשל או ריק. עובר לנסות OpenAI...");
       for (const oaKey of openAIKeys) {
         if (finalAnswerText) break;
         try {
+          console.log("🤖 [OpenAI] שולח בקשה ל-gpt-4o-mini...");
           const oaResponse = await axios.post("https://api.openai.com/v1/chat/completions", {
             model: "gpt-4o-mini",
             messages: [{ role: "system", content: systemInstruction }, ...userSession.history, { role: "user", content: transcribedText }]
@@ -710,16 +573,24 @@ const handleAudioRequest = async (req, res) => {
           if (oaResponse?.data?.choices?.[0]?.message?.content) {
             finalAnswerText = oaResponse.data.choices[0].message.content;
             usedModelName = "openai (gpt-4o-mini)";
+            console.log("✅ [OpenAI] הצלחה! התקבלה תשובה מ-OpenAI");
             break;
           }
-        } catch (e) {}
+        } catch (e) {
+          console.warn("⚠️ [OpenAI] נכשל:", e.response?.data?.error?.message || e.message);
+        }
       }
+    } else if (!finalAnswerText) {
+      console.log("ℹ️ [OpenAI] מדלג: לא נמצאו מפתחות OpenAI פעילים.");
     }
 
+    // 3️⃣ ניסיון גיבוי סופי: OpenRouter
     if (!finalAnswerText && openRouterKeys.length > 0) {
+      console.log("🤖 [AI] כל המנועים הקודמים נכשלו. עובר לנסות OpenRouter...");
       for (const orKey of openRouterKeys) {
         if (finalAnswerText) break;
         try {
+          console.log("🤖 [OpenRouter] שולח בקשה למודל openrouter/auto...");
           const orResponse = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
             model: "openrouter/auto",
             messages: [{ role: "system", content: systemInstruction }, ...userSession.history, { role: "user", content: transcribedText }]
@@ -727,13 +598,23 @@ const handleAudioRequest = async (req, res) => {
           if (orResponse?.data?.choices?.[0]?.message?.content) {
             finalAnswerText = orResponse.data.choices[0].message.content;
             usedModelName = "openrouter (auto-free)";
+            console.log("✅ [OpenRouter] הצלחה! התקבלה תשובה מ-OpenRouter");
             break;
           }
-        } catch (e) {}
+        } catch (e) {
+          console.error("❌ [OpenRouter] שגיאה בפנייה ל-OpenRouter:", e.response?.data || e.message);
+        }
       }
+    } else if (!finalAnswerText) {
+      console.log("ℹ️ [OpenRouter] מדלג: לא נמצאו מפתחות OpenRouter פעילים (`OPENROUTER_API_KEY`). בדוק האם המשתנה מוגדר ב-Render!");
     }
 
-    if (!finalAnswerText) finalAnswerText = "אני לא יכול לענות כרגע הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
+    if (!finalAnswerText) {
+      console.error("❌ [AI Error] כל מנועי ה-AI נכשלו ולא התקבלה תשובה!");
+      finalAnswerText = "אני לא יכול לענות כרגע הגעת למכסה היומית אנא נסה שוב מאוחר יותר";
+    }
+
+    console.log(`📝 [Final Answer] משתמש במודל: [${usedModelName}] | תשובה: "${finalAnswerText.slice(0, 60)}..."`);
 
     supabase.logConversation(userPhone, transcribedText, finalAnswerText, usedModelName, userSession.userName, userSession.userCity).catch(() => {});
 
@@ -741,16 +622,6 @@ const handleAudioRequest = async (req, res) => {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
       const success = await downloadAndUploadToYemot(songTarget, token, "1");
       return success ? sendYemotFileResponse(res, "1", "000", targetReturnFolder) : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער", targetReturnFolder);
-    }
-
-    if (!isAdminUser && !userSession.isAdminAuthenticated && normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
-      userSession.blockedAttempts += 1;
-      if (userSession.blockedAttempts >= 3) {
-        await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, config.bannedUserResponse, targetReturnFolder);
-      }
-      conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, config.getWarningMessage(userSession.blockedAttempts), targetReturnFolder);
     }
 
     userSession.history.push({ role: "user", content: transcribedText });
@@ -766,7 +637,6 @@ const handleAudioRequest = async (req, res) => {
       return sendYemotFileResponse(res, "1", "000", targetReturnFolder);
     }
 
-    // גיבוי למקרה חירום: חזרה ל-TTS המובנה של ימות
     return sendYemotTtsResponse(res, finalAnswerText, targetReturnFolder);
 
   } catch (error) {
