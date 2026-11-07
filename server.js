@@ -188,7 +188,7 @@ const handleAudioRequest = async (req, res) => {
     const userPhone = params.ApiPhone || params.phone || "default_user";
     const isAdminUser = (userPhone === ADMIN_PHONE);
 
-    // 📌 זיהוי השלוחה שממנה נשלחה הבקשה (תומך בפרמטרים SH, sh, 또는 folder)
+    // 📌 זיהוי השלוחה שממנה נשלחה הבקשה
     const currentFolder = params.SH || params.sh || params.folder || params.Folder || "1";
 
     if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר", currentFolder);
@@ -265,7 +265,8 @@ const handleAudioRequest = async (req, res) => {
     const elevenLabsApiKey = parsedElevenLabs.trim();
 
     let audioBuffer = null;
-    const possiblePaths = [params.path, params.Path, params.file, params.File, params.ApiPath, `ivr2:/${secondaryFolder}/last.wav`, `ivr2:/${primaryFolder}/last.wav`].filter(Boolean);
+    // 🔍 מוגדר כך שיחפש קודם כל בשלוחה 1 (ivr2:/1/last.wav) ואז בפרמטרים הנוספים
+    const possiblePaths = [`ivr2:/1/last.wav`, params.path, params.Path, params.file, params.File, params.ApiPath, `ivr2:/${secondaryFolder}/last.wav`, `ivr2:/${primaryFolder}/last.wav`].filter(Boolean);
 
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
