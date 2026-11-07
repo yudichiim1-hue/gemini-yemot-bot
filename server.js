@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי (כולל ElevenLabs TTS מדויק + Supabase)
+// 🚀 קובץ השרת הראשי (כולל השמעה בשלוחה המקורית + ElevenLabs + Supabase)
 // ==========================================
 
 const express = require("express");
@@ -70,24 +70,24 @@ const normalizeText = (text) => {
     .trim();
 };
 
-// פונקציית TTS מקורית של ימות המשיח (לשימוש בגיבוי / הודעות מערכת מהירות אם נדרש)
-function sendYemotTtsResponse(res, text, nextFolder = "1") {
+// פונקציית TTS מקורית של ימות המשיח (מחזירה לשלוחה המקורית)
+function sendYemotTtsResponse(res, text, returnFolder = "1") {
   const clean = (text || "")
     .replace(/[\r\n]+/g, " ")
     .replace(/[,.?!:;'"״׳`_\-*~#–—&?=<>/()\\[\]{}]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   res.set("Content-Type", "text/plain; charset=utf-8");
-  return res.send(`id_list_message=t-${clean}&go_to_folder=/${nextFolder}`);
+  return res.send(`id_list_message=t-${clean}&go_to_folder=/${returnFolder}`);
 }
 
-// פונקציה להשמעת קובץ שמע מוכן מימות המשיח
-function sendYemotFileResponse(res, folderNumber, fileName = "000", nextFolder = "1") {
+// פונקציה להשמעת קובץ שמע מוכן מימות המשיח (מחזירה לשלוחה המקורית)
+function sendYemotFileResponse(res, folderNumber, fileName = "000", returnFolder = "1") {
   res.set("Content-Type", "text/plain; charset=utf-8");
-  return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${nextFolder}`);
+  return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${returnFolder}`);
 }
 
-// פונקציה להמרת טקסט לדיבור דרך ElevenLabs והעלאתו לימות המשיח (עם פורמט אופטימלי ולוגים מלאים)
+// פונקציה להמרת טקסט לדיבור דרך ElevenLabs והעלאתו לימות המשיח
 async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "3") {
   const tempFilePath = path.join(__dirname, `temp_tts_${Date.now()}.mp3`);
   const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // קול Adam הרשמי
@@ -95,7 +95,6 @@ async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, tar
   console.log(`🎙️ [TTS] מתחיל ייצור שמע באילבן לבס (קול: ${voiceId}), אורך טקסט: ${text.length} תווים...`);
   
   try {
-    // שימוש בפורמט MP3 מותאם לימות המשיח (22kHz, 32kbps)
     const ttsRes = await axios.post(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_22050_32`,
       {
@@ -189,12 +188,15 @@ const handleAudioRequest = async (req, res) => {
     const userPhone = params.ApiPhone || params.phone || "default_user";
     const isAdminUser = (userPhone === ADMIN_PHONE);
 
-    if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר");
-    if (!checkRateLimit(userPhone)) return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר");
+    // 📌 זיהוי השלוחה שממנה נשלחה הבקשה (תומך בפרמטרים SH, sh, 또는 folder)
+    const currentFolder = params.SH || params.sh || params.folder || params.Folder || "1";
+
+    if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר", currentFolder);
+    if (!checkRateLimit(userPhone)) return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר", currentFolder);
 
     const isBanned = !isAdminUser && await supabase.isUserBanned(userPhone);
     if (isBanned) {
-      return sendYemotTtsResponse(res, config.bannedUserResponse);
+      return sendYemotTtsResponse(res, config.bannedUserResponse, currentFolder);
     }
 
     const callId = params.ApiCallId || params.ApiYFCallId;
@@ -204,7 +206,7 @@ const handleAudioRequest = async (req, res) => {
 
     if (callId && processedCalls.has(callId)) {
       res.set("Content-Type", "text/plain; charset=utf-8");
-      return res.send(`go_to_folder=/1`);
+      return res.send(`go_to_folder=/${currentFolder}`);
     }
     if (callId) {
       processedCalls.set(callId, Date.now());
@@ -277,7 +279,7 @@ const handleAudioRequest = async (req, res) => {
       } catch (err) {}
     }
 
-    if (!audioBuffer) return sendYemotTtsResponse(res, "לא נמצאה הקלטה תקינה אנא הקלט שוב");
+    if (!audioBuffer) return sendYemotTtsResponse(res, "לא נמצאה הקלטה תקינה אנא הקלט שוב", currentFolder);
 
     let transcribedText = "";
     if (deepgramApiKey) {
@@ -291,7 +293,7 @@ const handleAudioRequest = async (req, res) => {
     }
 
     if (!transcribedText || transcribedText.length < 1) {
-      return sendYemotTtsResponse(res, userSession.language === "en" ? "Please speak clearly" : "אנא דבר יותר לאט וברור");
+      return sendYemotTtsResponse(res, userSession.language === "en" ? "Please speak clearly" : "אנא דבר יותר לאט וברור", currentFolder);
     }
 
     const normalizedTranscription = normalizeText(transcribedText);
@@ -303,13 +305,13 @@ const handleAudioRequest = async (req, res) => {
     if (userSession.isAdminAuthenticated && config.adminLogoutTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.isAdminAuthenticated = false;
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, "יצאת ממצב מנהל בהצלחה במה עוד אוכל לעזור");
+      return sendYemotTtsResponse(res, "יצאת ממצב מנהל בהצלחה במה עוד אוכל לעזור", currentFolder);
     }
 
     if (!userSession.isAdminAuthenticated && !userSession.awaitingAdminPassword && config.adminLoginTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.awaitingAdminPassword = true;
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, "נא הקלד את סיסמת הניהול");
+      return sendYemotTtsResponse(res, "נא הקלד את סיסמת הניהול", currentFolder);
     }
 
     if (userSession.awaitingAdminPassword) {
@@ -327,10 +329,10 @@ const handleAudioRequest = async (req, res) => {
       if (enteredPassword === config.adminPassword) {
         userSession.isAdminAuthenticated = true;
         conversationHistory.set(userPhone, userSession);
-        return sendYemotTtsResponse(res, "סיסמה נכונה ברוך הבא למצב מנהל איזה מידע תרצה לשלוף");
+        return sendYemotTtsResponse(res, "סיסמה נכונה ברוך הבא למצב מנהל איזה מידע תרצה לשלוף", currentFolder);
       } else {
         conversationHistory.set(userPhone, userSession);
-        return sendYemotTtsResponse(res, "סיסמה שגויה חזרת למצב רגיל");
+        return sendYemotTtsResponse(res, "סיסמה שגויה חזרת למצב רגיל", currentFolder);
       }
     }
 
@@ -340,12 +342,12 @@ const handleAudioRequest = async (req, res) => {
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
         if (targetPhone) {
           if (targetPhone === ADMIN_PHONE) {
-            return sendYemotTtsResponse(res, "לא ניתן לחסום את מספר המנהל הראשי");
+            return sendYemotTtsResponse(res, "לא ניתן לחסום את מספר המנהל הראשי", currentFolder);
           }
           await supabase.banUser(targetPhone, "חסימה ידנית על ידי מנהל");
-          return sendYemotTtsResponse(res, `המספר ${targetPhone} נחסם בהצלחה מהמערכת`);
+          return sendYemotTtsResponse(res, `המספר ${targetPhone} נחסם בהצלחה מהמערכת`, currentFolder);
         } else {
-          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לחסימה אנא אמור שוב");
+          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לחסימה אנא אמור שוב", currentFolder);
         }
       }
 
@@ -354,9 +356,9 @@ const handleAudioRequest = async (req, res) => {
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
         if (targetPhone) {
           await supabase.unbanUser(targetPhone);
-          return sendYemotTtsResponse(res, `החסימה עבור המספר ${targetPhone} בוטלה בהצלחה`);
+          return sendYemotTtsResponse(res, `החסימה עבור המספר ${targetPhone} בוטלה בהצלחה`, currentFolder);
         } else {
-          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לביטול חסימה");
+          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לביטול חסימה", currentFolder);
         }
       }
 
@@ -368,12 +370,12 @@ const handleAudioRequest = async (req, res) => {
             recentLogs.slice(0, 3).forEach((item) => {
               logText += `משתמש ${item.phone} שאל: ${item.question} וענה לו: ${item.answer} . `;
             });
-            return sendYemotTtsResponse(res, logText);
+            return sendYemotTtsResponse(res, logText, currentFolder);
           } else {
-            return sendYemotTtsResponse(res, "אין פעילות רשומה במערכת");
+            return sendYemotTtsResponse(res, "אין פעילות רשומה במערכת", currentFolder);
           }
         } catch (err) {
-          return sendYemotTtsResponse(res, "שגיאה בשליפת הלוגים האחרונים");
+          return sendYemotTtsResponse(res, "שגיאה בשליפת הלוגים האחרונים", currentFolder);
         }
       }
 
@@ -401,12 +403,12 @@ const handleAudioRequest = async (req, res) => {
               lastConvs.forEach((item, index) => {
                 responseText += `שיחה ${index + 1} . שאלה: ${item.question || "ללא"} . תשובה: ${item.answer || "ללא"} . `;
               });
-              return sendYemotTtsResponse(res, responseText);
+              return sendYemotTtsResponse(res, responseText, currentFolder);
             } else {
-              return sendYemotTtsResponse(res, `לא נמצאו שיחות עבור המספר ${targetPhone}`);
+              return sendYemotTtsResponse(res, `לא נמצאו שיחות עבור המספר ${targetPhone}`, currentFolder);
             }
           } catch (err) {
-            return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים ממסד הנתונים");
+            return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים ממסד הנתונים", currentFolder);
           }
         } else if (fourDigitsMatch || digitsOnly.length >= 4) {
           const last4 = fourDigitsMatch ? fourDigitsMatch[0] : digitsOnly.slice(-4);
@@ -418,15 +420,15 @@ const handleAudioRequest = async (req, res) => {
               lastConvs.forEach((item, index) => {
                 responseText += `שיחה ${index + 1} של משתמש ${item.phone} . שאלה: ${item.question || "ללא"} . תשובה: ${item.answer || "ללא"} . `;
               });
-              return sendYemotTtsResponse(res, responseText);
+              return sendYemotTtsResponse(res, responseText, currentFolder);
             } else {
-              return sendYemotTtsResponse(res, `לא נמצאו שיחות עבור מספר המסתיים ב ${last4}`);
+              return sendYemotTtsResponse(res, `לא נמצאו שיחות עבור מספר המסתיים ב ${last4}`, currentFolder);
             }
           } catch (err) {
-            return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים לפי 4 ספרות");
+            return sendYemotTtsResponse(res, "שגיאה בשליפת הנתונים לפי 4 ספרות", currentFolder);
           }
         } else {
-          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון או ארבע ספרות אנא אמור שוב");
+          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון או ארבע ספרות אנא אמור שוב", currentFolder);
         }
       }
     }
@@ -438,19 +440,19 @@ const handleAudioRequest = async (req, res) => {
     if (config.switchToEnglishTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.language = "en";
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, "Switched to English. How can I help you?");
+      return sendYemotTtsResponse(res, "Switched to English. How can I help you?", currentFolder);
     }
 
     if (config.switchToHebrewTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.language = "he";
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, "עברנו חזרה לעברית במה אוכל לעזור");
+      return sendYemotTtsResponse(res, "עברנו חזרה לעברית במה אוכל לעזור", currentFolder);
     }
 
     if (config.personaTriggers.some(t => normalizedTranscription.includes(t))) {
       userSession.persona = transcribedText;
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`);
+      return sendYemotTtsResponse(res, `הבנתי מעכשיו ${transcribedText} אבל ממשיך לשמור על הכללים`, currentFolder);
     }
 
     if (!userSession.checkedSupabaseToday) {
@@ -479,7 +481,7 @@ const handleAudioRequest = async (req, res) => {
           userSession.userName = extractedName;
           conversationHistory.set(userPhone, userSession);
           supabase.logConversation(userPhone, transcribedText, `נעים מאוד ${extractedName}`, "system-name", extractedName, userSession.userCity).catch(() => {});
-          return sendYemotTtsResponse(res, `נעים מאוד ${extractedName} מעכשיו אזכור אותך במה אוכל לעזור`);
+          return sendYemotTtsResponse(res, `נעים מאוד ${extractedName} מעכשיו אזכור אותך במה אוכל לעזור`, currentFolder);
         }
       }
     }
@@ -498,7 +500,7 @@ const handleAudioRequest = async (req, res) => {
           userSession.userCity = extractedCity;
           conversationHistory.set(userPhone, userSession);
           supabase.logConversation(userPhone, transcribedText, `רשמתי שאתה מ${extractedCity}`, "system-city", userSession.userName, extractedCity).catch(() => {});
-          return sendYemotTtsResponse(res, `מעולה רשמתי שאתה מ${extractedCity} במה עוד אוכל לעזור`);
+          return sendYemotTtsResponse(res, `מעולה רשמתי שאתה מ${extractedCity} במה עוד אוכל לעזור`, currentFolder);
         }
       }
     }
@@ -507,16 +509,16 @@ const handleAudioRequest = async (req, res) => {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, config.bannedUserResponse);
+        return sendYemotTtsResponse(res, config.bannedUserResponse, currentFolder);
       }
       userSession.lastActive = Date.now();
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, config.getWarningMessage(userSession.blockedAttempts));
+      return sendYemotTtsResponse(res, config.getWarningMessage(userSession.blockedAttempts), currentFolder);
     }
 
     if (config.resetTriggers.some(t => normalizedTranscription.includes(t))) {
       conversationHistory.set(userPhone, { history: [], timer: null, lastActive: Date.now(), blockedAttempts: userSession.blockedAttempts, language: "he", persona: "רוני", checkedSupabaseToday: true, userName: userSession.userName, userCity: userSession.userCity, isAdminAuthenticated: false, awaitingAdminPassword: false });
-      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה שמי רוני במה אוכל לעזור");
+      return sendYemotTtsResponse(res, "השיחה אופסה בהצלחה שמי רוני במה אוכל לעזור", currentFolder);
     }
 
     const isSummaryRequested = config.summaryTriggers.some(t => normalizedTranscription.includes(t));
@@ -624,17 +626,17 @@ const handleAudioRequest = async (req, res) => {
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
       const success = await downloadAndUploadToYemot(songTarget, token, "3");
-      return success ? sendYemotFileResponse(res, "3", "000", "3") : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער");
+      return success ? sendYemotFileResponse(res, "3", "000", currentFolder) : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער", currentFolder);
     }
 
     if (!isAdminUser && !userSession.isAdminAuthenticated && normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
         await blockUserPermanently(userPhone);
-        return sendYemotTtsResponse(res, config.bannedUserResponse);
+        return sendYemotTtsResponse(res, config.bannedUserResponse, currentFolder);
       }
       conversationHistory.set(userPhone, userSession);
-      return sendYemotTtsResponse(res, config.getWarningMessage(userSession.blockedAttempts));
+      return sendYemotTtsResponse(res, config.getWarningMessage(userSession.blockedAttempts), currentFolder);
     }
 
     userSession.history.push({ role: "user", content: transcribedText });
@@ -643,21 +645,22 @@ const handleAudioRequest = async (req, res) => {
     conversationHistory.set(userPhone, userSession);
 
     // ==========================================
-    // 🎙️ הפעלת ElevenLabs TTS והשמעה דרך ימות המשיח
+    // 🎙️ הפעלת ElevenLabs TTS והשמעה בשלוחה המקורית
     // ==========================================
     if (elevenLabsApiKey) {
       const ttsSuccess = await generateAndUploadElevenLabsTts(finalAnswerText, token, elevenLabsApiKey, "3");
       if (ttsSuccess) {
-        // השמעת קובץ ה-000 שהועלה מתיקייה 3
-        return sendYemotFileResponse(res, "3", "000", "1");
+        // מחזיר את הקובץ מתיקייה 3 וחוזר לשלוחה המקורית (currentFolder)
+        return sendYemotFileResponse(res, "3", "000", currentFolder);
       }
     }
 
-    // גיבוי: אם אין מפתח אילבן לבס או שההעלאה נכשלה, חזור ל-TTS רגיל של ימות המשיח
-    return sendYemotTtsResponse(res, finalAnswerText);
+    // גיבוי: חזרה ל-TTS של ימות בשלוחה המקורית
+    return sendYemotTtsResponse(res, finalAnswerText, currentFolder);
 
   } catch (error) {
-    return sendYemotTtsResponse(res, "אני מתנצל חלה שגיאה במערכת אנא נסה שנית");
+    const currentFolder = req.query.SH || req.query.sh || "1";
+    return sendYemotTtsResponse(res, "אני מתנצל חלה שגיאה במערכת אנא נסה שנית", currentFolder);
   }
 };
 
