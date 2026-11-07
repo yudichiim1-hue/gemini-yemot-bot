@@ -83,27 +83,48 @@ function sendYemotTtsResponse(res, text, returnFolder = "1") {
   return res.send(`id_list_message=t-${clean}&go_to_folder=/${returnFolder}`);
 }
 
-// 🟢 הפקודה המרכזית: השמעת קובץ מוכן מימות המשיח (חובה להשמעת קול איכותי)
+// 🟢 השמעת קובץ WAV משלוחה אחרת באמצעות תחביר l- של id_list_message
 function sendYemotFileResponse(res, folderNumber = "1", fileName = "000", returnFolder = "1") {
   res.set("Content-Type", "text/plain; charset=utf-8");
-  // מחזירים את ציון התיקייה המפורש 1/000 כדי שהמערכת תדע לשלוף אותו משלוחה 1
-  console.log(`🟢 [Response] שולח פקודת השמעת קובץ לימות המשיח: f-${folderNumber}/${fileName}`);
-  return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${returnFolder}`);
+
+  // לפי תחביר ימות: l-/נתיב-השלוחה.f-שם-הקובץ
+  // ימות משמיעה את קובץ ה-WAV לפי שם הקובץ ללא הסיומת.
+  const command = `id_list_message=l-/${folderNumber}.f-${fileName}&go_to_folder=/${returnFolder}`;
+
+  console.log(`🟢 [Response] שולח פקודת השמעת WAV לימות המשיח: ${command}`);
+  return res.send(command);
 }
 
-// פונקציה להמרת טקסט לדיבור דרך ElevenLabs, המרה תקנית עם FFmpeg, והעלאה לשלוחה 1
+// המרה אחידה ל-WAV טלפוני: PCM signed 16-bit, mono, 8000Hz
+function convertToYemotWav(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg(inputPath)
+      .noVideo()
+      .audioCodec("pcm_s16le")
+      .audioChannels(1)
+      .audioFrequency(8000)
+      .format("wav")
+      .on("end", resolve)
+      .on("error", reject);
+
+    command.save(outputPath);
+  });
+}
+
+// פונקציה להמרת טקסט לדיבור דרך ElevenLabs, המרה ל-WAV והעלאה לשלוחה 1 דרך ElevenLabs, המרה תקנית עם FFmpeg, והעלאה לשלוחה 1
 async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "1") {
-  const rawFilePath = path.join(__dirname, `temp_raw_${Date.now()}.mp3`);
-  const convertedFilePath = path.join(__dirname, `temp_converted_${Date.now()}.mp3`);
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // קול Adam
-  
-  console.log(`🎙️ [TTS] מתחיל ייצור שמע באילבן לבס, אורך טקסט: ${text.length} תווים...`);
-  
+  const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const rawFilePath = path.join(__dirname, `temp_raw_${uniqueId}.mp3`);
+  const convertedFilePath = path.join(__dirname, `temp_converted_${uniqueId}.wav`);
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB";
+
+  console.log(`🎙️ [TTS] מתחיל ייצור שמע ב-ElevenLabs, אורך טקסט: ${String(text || "").length} תווים...`);
+
   try {
     const ttsRes = await axios.post(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_22050_32`,
       {
-        text: text,
+        text: String(text || ""),
         model_id: "eleven_multilingual_v2",
         voice_settings: {
           stability: 0.75,
@@ -116,41 +137,70 @@ async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, tar
           "Content-Type": "application/json"
         },
         responseType: "arraybuffer",
-        timeout: 15000
+        timeout: 30000
       }
     );
 
-    fs.writeFileSync(rawFilePath, Buffer.from(ttsRes.data));
-    console.log(`✅ [TTS] קובץ גולמי התקבל. מבצע המרה לפורמט מותאם לימות המשיח (Mono, 22kHz)...`);
+    if (!ttsRes.data || !Buffer.from(ttsRes.data).length) {
+      throw new Error("ElevenLabs returned an empty audio file");
+    }
 
-    // המרת הקובץ בעזרת FFmpeg לפורמט תואם מוחלט לנגן של ימות המשיח
-    await new Promise((resolve, reject) => {
-      ffmpeg(rawFilePath)
-        .audioCodec('libmp3lame')
-        .audioChannels(1) // מונו
-        .audioFrequency(22050) // קצב דגימה תקני
-        .audioBitrate('32k') // קצב סיביות נקי
-        .save(convertedFilePath)
-        .on('end', resolve)
-        .on('error', reject);
+    fs.writeFileSync(rawFilePath, Buffer.from(ttsRes.data));
+    console.log("✅ [TTS] התקבל MP3. ממיר ל-WAV טלפוני PCM 16-bit, mono, 8000Hz...");
+
+    await convertToYemotWav(rawFilePath, convertedFilePath);
+
+    const stat = fs.statSync(convertedFilePath);
+    if (!stat.size || stat.size < 44) {
+      throw new Error(`Converted WAV is empty or invalid (${stat.size} bytes)`);
+    }
+
+    console.log(`📤 [Yemot] מעלה WAV לשלוחה ${targetFolder} (000.wav), גודל: ${stat.size} bytes`);
+
+    const form = new FormData();
+    form.append("file", fs.createReadStream(convertedFilePath), {
+      filename: "000.wav",
+      contentType: "audio/wav"
     });
 
-    console.log(`📤 [Yemot] מעלה את הקובץ המומר לשרתי ימות המשיח לשלוחה ${targetFolder} (000.mp3)...`);
-    const form = new FormData();
-    form.append("file", fs.createReadStream(convertedFilePath));
-    const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
+    const uploadPath = `ivr2:/${targetFolder}/000.wav`;
+    const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?${new URLSearchParams({
+      token: String(token),
+      path: uploadPath
+    }).toString()}`;
 
-    const uploadRes = await axios.post(uploadUrl, form, { headers: form.getHeaders(), timeout: 15000 });
-    console.log(`📥 [Yemot] תגובת שרת ימות המשיח להעלאה:`, uploadRes.data);
+    const uploadRes = await axios.post(uploadUrl, form, {
+      headers: form.getHeaders(),
+      timeout: 30000,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    });
 
-    if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
-    if (fs.existsSync(convertedFilePath)) fs.unlinkSync(convertedFilePath);
+    console.log("📥 [Yemot] תגובת העלאה:", uploadRes.data);
+
+    if (uploadRes.data?.messageCode) {
+      throw new Error(`Yemot upload error ${uploadRes.data.messageCode}: ${uploadRes.data.message || "unknown error"}`);
+    }
+
+    // לפי תיעוד UploadFile, הצלחה מחזירה path ו-size.
+    if (!uploadRes.data || (!uploadRes.data.path && !uploadRes.data.size)) {
+      throw new Error(`Yemot did not confirm the uploaded file: ${JSON.stringify(uploadRes.data)}`);
+    }
+
+    console.log(`✅ [Yemot] קובץ WAV הועלה בהצלחה: ${uploadRes.data.path || uploadPath}`);
+
     return true;
   } catch (err) {
-    if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
-    if (fs.existsSync(convertedFilePath)) fs.unlinkSync(convertedFilePath);
-    console.error("❌ [Error] שגיאה בתהליך ההמרה / אילבן לבס / ימות המשיח:", err.message || err);
+    console.error("❌ [TTS] שגיאה ביצירה / המרה / העלאה:", err.response?.data || err.message || err);
     return false;
+  } finally {
+    for (const filePath of [rawFilePath, convertedFilePath]) {
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (cleanupError) {
+        console.warn("⚠️ [TTS] לא הצלחתי למחוק קובץ זמני:", cleanupError.message);
+      }
+    }
   }
 }
 
@@ -160,9 +210,13 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
 };
 
 async function downloadAndUploadToYemot(targetInput, token, targetFolder = "1") {
-  const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
+  const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const tempMp3Path = path.join(__dirname, `temp_song_${uniqueId}.mp3`);
+  const tempWavPath = path.join(__dirname, `temp_song_${uniqueId}.wav`);
+
   try {
     let videoUrl = targetInput;
+
     if (!targetInput.startsWith("http://") && !targetInput.startsWith("https://")) {
       videoUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(targetInput)}`;
     } else {
@@ -170,33 +224,87 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "1") 
       if (match && match[1]) videoUrl = `https://www.youtube.com/watch?v=${match[1]}`;
     }
 
-    const response = await axios.post("https://api.cobalt.tools/", { url: videoUrl, audioFormat: "mp3", isAudioOnly: true }, {
-      headers: { "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0" },
-      timeout: 25000
-    });
+    const response = await axios.post(
+      "https://api.cobalt.tools/",
+      { url: videoUrl, audioFormat: "mp3", isAudioOnly: true },
+      {
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0"
+        },
+        timeout: 30000
+      }
+    );
 
     const downloadDirectUrl = response.data?.url || response.data?.stream;
     if (!downloadDirectUrl) throw new Error("קישור הורדה שגוי");
 
-    const audioFileRes = await axios.get(downloadDirectUrl, { responseType: "stream", timeout: 30000 });
-    const writer = fs.createWriteStream(tempFilePath);
-    audioFileRes.data.pipe(writer);
-
-    await new Promise((resolve, reject) => {
-      writer.on("finish", resolve);
-      writer.on("error", reject);
+    const audioFileRes = await axios.get(downloadDirectUrl, {
+      responseType: "stream",
+      timeout: 45000
     });
 
-    const form = new FormData();
-    form.append("file", fs.createReadStream(tempFilePath));
-    const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
+    await new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(tempMp3Path);
+      audioFileRes.data.pipe(writer);
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+      audioFileRes.data.on("error", reject);
+    });
 
-    await axios.post(uploadUrl, form, { headers: form.getHeaders(), timeout: 30000 });
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    if (!fs.existsSync(tempMp3Path) || fs.statSync(tempMp3Path).size === 0) {
+      throw new Error("קובץ השיר שהורד ריק");
+    }
+
+    console.log("🎵 [Song] ממיר את השיר ל-WAV טלפוני...");
+    await convertToYemotWav(tempMp3Path, tempWavPath);
+
+    const wavSize = fs.statSync(tempWavPath).size;
+    if (wavSize < 44) throw new Error("המרת השיר ל-WAV נכשלה או יצרה קובץ ריק");
+
+    const form = new FormData();
+    form.append("file", fs.createReadStream(tempWavPath), {
+      filename: "000.wav",
+      contentType: "audio/wav"
+    });
+
+    const uploadPath = `ivr2:/${targetFolder}/000.wav`;
+    const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?${new URLSearchParams({
+      token: String(token),
+      path: uploadPath
+    }).toString()}`;
+
+    const uploadRes = await axios.post(uploadUrl, form, {
+      headers: form.getHeaders(),
+      timeout: 45000,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    });
+
+    console.log("📥 [Yemot] תגובת העלאת השיר:", uploadRes.data);
+
+    if (uploadRes.data?.messageCode) {
+      throw new Error(`Yemot upload error ${uploadRes.data.messageCode}: ${uploadRes.data.message || "unknown error"}`);
+    }
+
+    if (!uploadRes.data || (!uploadRes.data.path && !uploadRes.data.size)) {
+      throw new Error(`Yemot did not confirm the uploaded song: ${JSON.stringify(uploadRes.data)}`);
+    }
+
+    console.log(`✅ [Song] השיר הועלה כ-WAV: ${uploadRes.data.path || uploadPath}`);
     return true;
   } catch (err) {
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    console.error("❌ [Song] שגיאה בהורדה / המרה / העלאה:", err.response?.data || err.message || err);
     return false;
+  } finally {
+    for (const filePath of [tempMp3Path, tempWavPath]) {
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (cleanupError) {
+        console.warn("⚠️ [Song] לא הצלחתי למחוק קובץ זמני:", cleanupError.message);
+      }
+    }
   }
 }
 
