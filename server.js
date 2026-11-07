@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי המלא (כולל המרת MP3 תואמת לימות המשיח + ElevenLabs)
+// 🚀 קובץ השרת הראשי המלא (Edge-TTS חינמי בעברית + המרת WAV טלפונית לימות המשיח)
 // ==========================================
 
 const express = require("express");
@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
 const ffmpeg = require("fluent-ffmpeg");
+const { MsEdgeTTS } = require("edge-tts");
 
 const config = require("./config");
 const prompts = require("./prompts");
@@ -86,11 +87,7 @@ function sendYemotTtsResponse(res, text, returnFolder = "1") {
 // 🟢 השמעת קובץ WAV משלוחה אחרת באמצעות תחביר l- של id_list_message
 function sendYemotFileResponse(res, folderNumber = "1", fileName = "000", returnFolder = "1") {
   res.set("Content-Type", "text/plain; charset=utf-8");
-
-  // לפי תחביר ימות: l-/נתיב-השלוחה.f-שם-הקובץ
-  // ימות משמיעה את קובץ ה-WAV לפי שם הקובץ ללא הסיומת.
   const command = `id_list_message=l-/${folderNumber}.f-${fileName}&go_to_folder=/${returnFolder}`;
-
   console.log(`🟢 [Response] שולח פקודת השמעת WAV לימות המשיח: ${command}`);
   return res.send(command);
 }
@@ -111,42 +108,26 @@ function convertToYemotWav(inputPath, outputPath) {
   });
 }
 
-// פונקציה להמרת טקסט לדיבור דרך ElevenLabs, המרה ל-WAV והעלאה לשלוחה 1 דרך ElevenLabs, המרה תקנית עם FFmpeg, והעלאה לשלוחה 1
-async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "1") {
+// 🎙️ פונקציית Edge-TTS חינמית לחלוטין לעברית טבעית (Hila), המרה ל-WAV טלפוני והעלאה לשלוחה 1
+async function generateAndUploadEdgeTts(text, token, targetFolder = "1") {
   const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const rawFilePath = path.join(__dirname, `temp_raw_${uniqueId}.mp3`);
   const convertedFilePath = path.join(__dirname, `temp_converted_${uniqueId}.wav`);
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB";
 
-  console.log(`🎙️ [TTS] מתחיל ייצור שמע ב-ElevenLabs, אורך טקסט: ${String(text || "").length} תווים...`);
+  console.log(`🎙️ [Edge-TTS] מתחיל ייצור שמע בעברית (Hila), אורך טקסט: ${String(text || "").length} תווים...`);
 
   try {
-    const ttsRes = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_22050_32`,
-      {
-        text: String(text || ""),
-        model_id: "eleven_multilingual_v2",
-        voice_settings: {
-          stability: 0.75,
-          similarity_boost: 0.85
-        }
-      },
-      {
-        headers: {
-          "xi-api-key": elevenLabsApiKey,
-          "Content-Type": "application/json"
-        },
-        responseType: "arraybuffer",
-        timeout: 30000
-      }
-    );
+    const tts = new MsEdgeTTS();
+    // קול עברי איכותי של מיקרוסופט (הילה - נקבה. ניתן להחליף ל-he-IL-AvriNeural עבור קול גברי)
+    await tts.setMetadata("he-IL-HilaNeural", "audio-24khz-48kbitrate-mono-mp3");
 
-    if (!ttsRes.data || !Buffer.from(ttsRes.data).length) {
-      throw new Error("ElevenLabs returned an empty audio file");
+    await tts.toFile(rawFilePath, String(text || ""));
+
+    if (!fs.existsSync(rawFilePath) || fs.statSync(rawFilePath).size === 0) {
+      throw new Error("Edge-TTS returned an empty audio file");
     }
 
-    fs.writeFileSync(rawFilePath, Buffer.from(ttsRes.data));
-    console.log("✅ [TTS] התקבל MP3. ממיר ל-WAV טלפוני PCM 16-bit, mono, 8000Hz...");
+    console.log("✅ [Edge-TTS] התקבל MP3. ממיר ל-WAV טלפוני PCM 16-bit, mono, 8000Hz...");
 
     await convertToYemotWav(rawFilePath, convertedFilePath);
 
@@ -182,23 +163,21 @@ async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, tar
       throw new Error(`Yemot upload error ${uploadRes.data.messageCode}: ${uploadRes.data.message || "unknown error"}`);
     }
 
-    // לפי תיעוד UploadFile, הצלחה מחזירה path ו-size.
     if (!uploadRes.data || (!uploadRes.data.path && !uploadRes.data.size)) {
       throw new Error(`Yemot did not confirm the uploaded file: ${JSON.stringify(uploadRes.data)}`);
     }
 
     console.log(`✅ [Yemot] קובץ WAV הועלה בהצלחה: ${uploadRes.data.path || uploadPath}`);
-
     return true;
   } catch (err) {
-    console.error("❌ [TTS] שגיאה ביצירה / המרה / העלאה:", err.response?.data || err.message || err);
+    console.error("❌ [Edge-TTS] שגיאה ביצירה / המרה / העלאה:", err.response?.data || err.message || err);
     return false;
   } finally {
     for (const filePath of [rawFilePath, convertedFilePath]) {
       try {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       } catch (cleanupError) {
-        console.warn("⚠️ [TTS] לא הצלחתי למחוק קובץ זמני:", cleanupError.message);
+        console.warn("⚠️ [Edge-TTS] לא הצלחתי למחוק קובץ זמני:", cleanupError.message);
       }
     }
   }
@@ -347,7 +326,6 @@ const handleAudioRequest = async (req, res) => {
     const parsedOpenAIKeys = new Set([process.env.OPENAI_API_KEY, process.env.OPENAI_API_KEY_1].filter(Boolean));
     const parsedOpenRouterKeys = new Set([process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_1].filter(Boolean));
     let parsedDeepgram = process.env.DEEPGRAM_API_KEY || "";
-    let parsedElevenLabs = process.env.ELEVENLABS_API_KEY || "";
 
     const directGemini = params.GEMINI_API_KEY || params.gemini_key || params.GeminiKey || params.AI_KEY || params.API || params.Api || params.api || params.KEY || params.Key || params.key || params.GEMINI;
     if (directGemini) parsedGeminiKeys.add(String(directGemini).trim());
@@ -361,9 +339,6 @@ const handleAudioRequest = async (req, res) => {
     const directDeepgram = params.DEEPGRAM || params.deepgram || params.DEEPGRAM_API_KEY || params.deepgram_key || params.DeepgramKey;
     if (directDeepgram) parsedDeepgram = String(directDeepgram).trim();
 
-    const directElevenLabs = params.ELEVENLABS || params.elevenlabs || params.ELEVENLABS_API_KEY || params.elevenlabs_key || params.ElevenLabsKey;
-    if (directElevenLabs) parsedElevenLabs = String(directElevenLabs).trim();
-
     const extractKeysDeeply = (obj, depth = 0) => {
       if (depth > 5 || !obj) return;
       for (const value of Object.values(obj)) {
@@ -375,7 +350,6 @@ const handleAudioRequest = async (req, res) => {
               if (part.startsWith("AIza") || part.startsWith("AQ.")) parsedGeminiKeys.add(part);
               else if (part.startsWith("sk-proj-") || (part.startsWith("sk-") && !part.startsWith("sk-or-"))) parsedOpenAIKeys.add(part);
               else if (part.startsWith("sk-or-")) parsedOpenRouterKeys.add(part);
-              else if (part.startsWith("xi-")) parsedElevenLabs = part;
               else if (part.length === 40 && /^[a-f0-9]{40}$/i.test(part)) parsedDeepgram = part;
             }
           } else if (typeof item === "object" && item !== null) extractKeysDeeply(item, depth + 1);
@@ -388,10 +362,8 @@ const handleAudioRequest = async (req, res) => {
     const openAIKeys = Array.from(parsedOpenAIKeys);
     const openRouterKeys = Array.from(parsedOpenRouterKeys);
     const deepgramApiKey = parsedDeepgram.trim();
-    const elevenLabsApiKey = parsedElevenLabs.trim();
 
     let audioBuffer = null;
-    // 🔍 סדר חיפוש ההקלטה המדורג: שלוחה 1 -> שלוחה 2 -> שלוחה 3 ואז שאר האפשרויות
     const possiblePaths = [
       `ivr2:/1/last.wav`, 
       `ivr2:/2/last.wav`, 
@@ -784,16 +756,14 @@ const handleAudioRequest = async (req, res) => {
     conversationHistory.set(userPhone, userSession);
 
     // ==========================================
-    // 🎙️ הפעלת ElevenLabs TTS והעלאה לשלוחה 1
+    // 🎙️ הפעלת Edge-TTS והעלאה לשלוחה 1
     // ==========================================
-    if (elevenLabsApiKey) {
-      const ttsSuccess = await generateAndUploadElevenLabsTts(finalAnswerText, token, elevenLabsApiKey, "1");
-      if (ttsSuccess) {
-        return sendYemotFileResponse(res, "1", "000", targetReturnFolder);
-      }
+    const ttsSuccess = await generateAndUploadEdgeTts(finalAnswerText, token, "1");
+    if (ttsSuccess) {
+      return sendYemotFileResponse(res, "1", "000", targetReturnFolder);
     }
 
-    // גיבוי למקרה שאין ElevenLabs: חזרה ל-TTS של ימות בשלוחה 1
+    // גיבוי למקרה חירום: חזרה ל-TTS המובנה של ימות
     return sendYemotTtsResponse(res, finalAnswerText, targetReturnFolder);
 
   } catch (error) {
