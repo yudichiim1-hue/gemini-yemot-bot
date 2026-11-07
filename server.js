@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי (שימוש ישיר בקובץ שמע משלוחה 1 + ElevenLabs)
+// 🚀 קובץ השרת הראשי (חיפוש הקלטה בשלוחות 1, 2 ו-3 + ElevenLabs)
 // ==========================================
 
 const express = require("express");
@@ -266,7 +266,19 @@ const handleAudioRequest = async (req, res) => {
     const elevenLabsApiKey = parsedElevenLabs.trim();
 
     let audioBuffer = null;
-    const possiblePaths = [`ivr2:/1/last.wav`, `ivr2:/2/last.wav`, params.path, params.Path, params.file, params.File, params.ApiPath, `ivr2:/${secondaryFolder}/last.wav`, `ivr2:/${primaryFolder}/last.wav`].filter(Boolean);
+    // 🔍 סדר חיפוש ההקלטה המעודכן: שלוחה 1 -> שלוחה 2 -> שלוחה 3 ואז שאר האפשרויות
+    const possiblePaths = [
+      `ivr2:/1/last.wav`, 
+      `ivr2:/2/last.wav`, 
+      `ivr2:/3/last.wav`, 
+      params.path, 
+      params.Path, 
+      params.file, 
+      params.File, 
+      params.ApiPath, 
+      `ivr2:/${secondaryFolder}/last.wav`, 
+      `ivr2:/${primaryFolder}/last.wav`
+    ].filter(Boolean);
 
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
@@ -275,6 +287,7 @@ const handleAudioRequest = async (req, res) => {
         const audioResponse = await axios.get(downloadUrl, { responseType: "arraybuffer", timeout: 8000 });
         if (audioResponse.data && audioResponse.data.length > 0) {
           audioBuffer = Buffer.from(audioResponse.data);
+          console.log(`📁 [Audio] נמצא קובץ הקלטה תקין בנתיב: ${cleanPath}`);
           break;
         }
       } catch (err) {}
@@ -651,7 +664,6 @@ const handleAudioRequest = async (req, res) => {
     if (elevenLabsApiKey) {
       const ttsSuccess = await generateAndUploadElevenLabsTts(finalAnswerText, token, elevenLabsApiKey, "1");
       if (ttsSuccess) {
-        // 🟢 שולח פקודת קובץ שמע מובהקת (f-1/000)
         return sendYemotFileResponse(res, "1", "000", targetReturnFolder);
       }
     }
