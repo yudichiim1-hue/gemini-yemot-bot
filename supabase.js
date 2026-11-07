@@ -5,7 +5,7 @@
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://shjhpqeacfwzejsmqtpf.supabase.co/rest/v1/";
-const SUPABASE_KEY = process.env.SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNoamhwcWVhY2Z3emVqc21xdHBmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQwNjY5MjEsImV4cCI6MjEwOTY0MjkyMX0.93IL9x3AobpjRINz1eyUyNpbIM0X-3MkbagRQnkl0p4";
+const SUPABASE_KEY = process.env.SUPABASE_KEY || "sb_publishable_DG490EpeEGCtRWTmkumdnQ_Nt_sCUCn";
 
 const supabase = {
   // רישום שיחה חדשה במסד הנתונים עם דיבוג שגיאות מלא
