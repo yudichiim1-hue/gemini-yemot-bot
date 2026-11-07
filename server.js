@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי המלא (Edge-TTS חינמי בעברית + המרת WAV טלפונית לימות המשיח)
+// 🚀 קובץ השרת הראשי המלא (Edge-TTS חינמי בעברית דרך CLI + המרת WAV טלפונית לימות המשיח)
 // ==========================================
 
 const express = require("express");
@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
 const ffmpeg = require("fluent-ffmpeg");
-const { EdgeTTS } = require("node-edge-tts");
+const { execSync } = require("child_process");
 
 const config = require("./config");
 const prompts = require("./prompts");
@@ -108,25 +108,25 @@ function convertToYemotWav(inputPath, outputPath) {
   });
 }
 
-// 🎙️ פונקציית Edge-TTS חינמית לחלוטין בעברית טבעית (Hila), המרה ל-WAV טלפוני והעלאה לשלוחה 1
+// 🎙️ פונקציית Edge-TTS משופרת באמצעות מעטפת CLI (מונעת שגיאות קבצים ריקים)
 async function generateAndUploadEdgeTts(text, token, targetFolder = "1") {
   const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const rawFilePath = path.join(__dirname, `temp_raw_${uniqueId}.mp3`);
   const convertedFilePath = path.join(__dirname, `temp_converted_${uniqueId}.wav`);
 
-  console.log(`🎙️ [Edge-TTS] מתחיל ייצור שמע בעברית, אורך טקסט: ${String(text || "").length} תווים...`);
+  const safeText = String(text || "")
+    .replace(/["'`]/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+
+  console.log(`🎙️ [Edge-TTS] מתחיל ייצור שמע בעברית דרך CLI, אורך טקסט: ${safeText.length} תווים...`);
 
   try {
-    const tts = new EdgeTTS();
-    // הגדרת קול עברי (he-IL-HilaNeural לנשים או he-IL-AvriNeural לגברים)
-    await tts.ttsPromise(String(text || ""), rawFilePath, {
-      voice: "he-IL-HilaNeural",
-      lang: "he-IL",
-      outputFormat: "audio-24khz-48kbitrate-mono-mp3"
-    });
+    const cmd = `npx edge-tts --voice he-IL-HilaNeural --text "${safeText}" --write-media "${rawFilePath}"`;
+    execSync(cmd, { timeout: 20000 });
 
     if (!fs.existsSync(rawFilePath) || fs.statSync(rawFilePath).size === 0) {
-      throw new Error("Edge-TTS returned an empty audio file");
+      throw new Error("Edge-TTS generated an empty audio file via CLI");
     }
 
     console.log("✅ [Edge-TTS] התקבל MP3. ממיר ל-WAV טלפוני PCM 16-bit, mono, 8000Hz...");
@@ -172,7 +172,7 @@ async function generateAndUploadEdgeTts(text, token, targetFolder = "1") {
     console.log(`✅ [Yemot] קובץ WAV הועלה בהצלחה: ${uploadRes.data.path || uploadPath}`);
     return true;
   } catch (err) {
-    console.error("❌ [Edge-TTS] שגיאה ביצירה / המרה / העלאה:", err.response?.data || err.message || err);
+    console.error("❌ [Edge-TTS] שגיאה ביצירה / המרה / העלאה:", err.message || err);
     return false;
   } finally {
     for (const filePath of [rawFilePath, convertedFilePath]) {
