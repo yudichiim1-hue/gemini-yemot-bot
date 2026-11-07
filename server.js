@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
 const ffmpeg = require("fluent-ffmpeg");
-const { MsEdgeTTS } = require("edge-tts");
+const { EdgeTTS } = require("node-edge-tts");
 
 const config = require("./config");
 const prompts = require("./prompts");
@@ -108,20 +108,22 @@ function convertToYemotWav(inputPath, outputPath) {
   });
 }
 
-// 🎙️ פונקציית Edge-TTS חינמית לחלוטין לעברית טבעית (Hila), המרה ל-WAV טלפוני והעלאה לשלוחה 1
+// 🎙️ פונקציית Edge-TTS חינמית לחלוטין בעברית טבעית (Hila), המרה ל-WAV טלפוני והעלאה לשלוחה 1
 async function generateAndUploadEdgeTts(text, token, targetFolder = "1") {
   const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const rawFilePath = path.join(__dirname, `temp_raw_${uniqueId}.mp3`);
   const convertedFilePath = path.join(__dirname, `temp_converted_${uniqueId}.wav`);
 
-  console.log(`🎙️ [Edge-TTS] מתחיל ייצור שמע בעברית (Hila), אורך טקסט: ${String(text || "").length} תווים...`);
+  console.log(`🎙️ [Edge-TTS] מתחיל ייצור שמע בעברית, אורך טקסט: ${String(text || "").length} תווים...`);
 
   try {
-    const tts = new MsEdgeTTS();
-    // קול עברי איכותי של מיקרוסופט (הילה - נקבה. ניתן להחליף ל-he-IL-AvriNeural עבור קול גברי)
-    await tts.setMetadata("he-IL-HilaNeural", "audio-24khz-48kbitrate-mono-mp3");
-
-    await tts.toFile(rawFilePath, String(text || ""));
+    const tts = new EdgeTTS();
+    // הגדרת קול עברי (he-IL-HilaNeural לנשים או he-IL-AvriNeural לגברים)
+    await tts.ttsPromise(String(text || ""), rawFilePath, {
+      voice: "he-IL-HilaNeural",
+      lang: "he-IL",
+      outputFormat: "audio-24khz-48kbitrate-mono-mp3"
+    });
 
     if (!fs.existsSync(rawFilePath) || fs.statSync(rawFilePath).size === 0) {
       throw new Error("Edge-TTS returned an empty audio file");
