@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי (כולל חזרה קבועה לשלוחה 1 ותיקון שפה לאנגלית/עברית באילבן לבס)
+// 🚀 קובץ השרת הראשי (שמירה וקריאה ישירות משלוחה 1 ו-2 + ElevenLabs)
 // ==========================================
 
 const express = require("express");
@@ -81,14 +81,14 @@ function sendYemotTtsResponse(res, text, returnFolder = "1") {
   return res.send(`id_list_message=t-${clean}&go_to_folder=/${returnFolder}`);
 }
 
-// פונקציה להשמעת קובץ שמע מוכן מימות המשיח (מחזירה תמיד לשלוחה 1)
-function sendYemotFileResponse(res, folderNumber, fileName = "000", returnFolder = "1") {
+// פונקציה להשמעת קובץ שמע מוכן מימות המשיח (ישירות משלוחה 1)
+function sendYemotFileResponse(res, folderNumber = "1", fileName = "000", returnFolder = "1") {
   res.set("Content-Type", "text/plain; charset=utf-8");
   return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${returnFolder}`);
 }
 
-// פונקציה להמרת טקסט לדיבור דרך ElevenLabs עם אכיפת שפה והעלאה לתיקייה 3
-async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "3") {
+// פונקציה להמרת טקסט לדיבור דרך ElevenLabs והעלאה ישירות לשלוחה 1
+async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "1") {
   const tempFilePath = path.join(__dirname, `temp_tts_${Date.now()}.mp3`);
   const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // קול Adam הרשמי
   
@@ -100,9 +100,8 @@ async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, tar
       {
         text: text,
         model_id: "eleven_multilingual_v2",
-        // הגדרת הגדרות קול וחיזוק דקדוקי למניעת שגיאות שפה
         voice_settings: {
-          stability: 0.75,         // יציבות גבוהה יותר מונעת זיופים באינטונציה
+          stability: 0.75,
           similarity_boost: 0.85
         }
       },
@@ -119,7 +118,7 @@ async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, tar
     console.log(`✅ [TTS] קובץ MP3 התקבל בהצלחה מאילבן לבס (גודל: ${ttsRes.data.length} בתים). שומר מקומית...`);
     fs.writeFileSync(tempFilePath, Buffer.from(ttsRes.data));
 
-    console.log(`📤 [Yemot] מעלה את הקובץ לשרתי ימות המשיח לתיקייה ${targetFolder} (000.mp3)...`);
+    console.log(`📤 [Yemot] מעלה את הקובץ לשרתי ימות המשיח ישירות לשלוחה ${targetFolder} (000.mp3)...`);
     const form = new FormData();
     form.append("file", fs.createReadStream(tempFilePath));
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
@@ -141,7 +140,7 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
   return axios.post(geminiUrl, payload, { headers: { "Content-Type": "application/json" }, timeout: 12000 });
 };
 
-async function downloadAndUploadToYemot(targetInput, token, targetFolder = "3") {
+async function downloadAndUploadToYemot(targetInput, token, targetFolder = "1") {
   const tempFilePath = path.join(__dirname, `temp_song_${Date.now()}.mp3`);
   try {
     let videoUrl = targetInput;
@@ -189,7 +188,6 @@ const handleAudioRequest = async (req, res) => {
     const userPhone = params.ApiPhone || params.phone || "default_user";
     const isAdminUser = (userPhone === ADMIN_PHONE);
 
-    // 📌 קביעה מוחלטת שהיעד לחזרה הוא שלוחה 1
     const targetReturnFolder = "1";
 
     if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר", targetReturnFolder);
@@ -266,8 +264,8 @@ const handleAudioRequest = async (req, res) => {
     const elevenLabsApiKey = parsedElevenLabs.trim();
 
     let audioBuffer = null;
-    // מחפש קודם כל בשלוחה 1 (ivr2:/1/last.wav)
-    const possiblePaths = [`ivr2:/1/last.wav`, params.path, params.Path, params.file, params.File, params.ApiPath, `ivr2:/${secondaryFolder}/last.wav`, `ivr2:/${primaryFolder}/last.wav`].filter(Boolean);
+    // 🔍 סדר חיפוש ההקלטה: קודם כל שלוחה 1 ואז שלוחה 2 ואז שאר האפשרויות
+    const possiblePaths = [`ivr2:/1/last.wav`, `ivr2:/2/last.wav`, params.path, params.Path, params.file, params.File, params.ApiPath, `ivr2:/${secondaryFolder}/last.wav`, `ivr2:/${primaryFolder}/last.wav`].filter(Boolean);
 
     for (let rawPath of possiblePaths) {
       let cleanPath = rawPath.startsWith("ivr2:") ? rawPath : (rawPath.startsWith("/") ? `ivr2:${rawPath}` : `ivr2:/${rawPath}`);
@@ -627,8 +625,8 @@ const handleAudioRequest = async (req, res) => {
 
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
-      const success = await downloadAndUploadToYemot(songTarget, token, "3");
-      return success ? sendYemotFileResponse(res, "3", "000", targetReturnFolder) : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער", targetReturnFolder);
+      const success = await downloadAndUploadToYemot(songTarget, token, "1");
+      return success ? sendYemotFileResponse(res, "1", "000", targetReturnFolder) : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער", targetReturnFolder);
     }
 
     if (!isAdminUser && !userSession.isAdminAuthenticated && normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
@@ -647,13 +645,13 @@ const handleAudioRequest = async (req, res) => {
     conversationHistory.set(userPhone, userSession);
 
     // ==========================================
-    // 🎙️ הפעלת ElevenLabs TTS והחזרה לשלוחה 1
+    // 🎙️ הפעלת ElevenLabs TTS ושמירה ישירות בשלוחה 1
     // ==========================================
     if (elevenLabsApiKey) {
-      const ttsSuccess = await generateAndUploadElevenLabsTts(finalAnswerText, token, elevenLabsApiKey, "3");
+      const ttsSuccess = await generateAndUploadElevenLabsTts(finalAnswerText, token, elevenLabsApiKey, "1");
       if (ttsSuccess) {
-        // מחזיר את קובץ האודיו מתיקייה 3 וחוזר לשלוחה 1
-        return sendYemotFileResponse(res, "3", "000", targetReturnFolder);
+        // מנגן את הקובץ ישירות מתוך שלוחה 1 ונשאר בה
+        return sendYemotFileResponse(res, "1", "000", targetReturnFolder);
       }
     }
 
