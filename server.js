@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי (חיפוש הקלטה בשלוחות 1, 2 ו-3 + ElevenLabs)
+// 🚀 קובץ השרת הראשי המלא (כולל המרת MP3 תואמת לימות המשיח + ElevenLabs)
 // ==========================================
 
 const express = require("express");
@@ -7,6 +7,7 @@ const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
+const ffmpeg = require("fluent-ffmpeg");
 
 const config = require("./config");
 const prompts = require("./prompts");
@@ -89,12 +90,13 @@ function sendYemotFileResponse(res, folderNumber = "1", fileName = "000", return
   return res.send(`id_list_message=f-${folderNumber}/${fileName}&go_to_folder=/${returnFolder}`);
 }
 
-// פונקציה להמרת טקסט לדיבור דרך ElevenLabs והעלאה ישירות לשלוחה 1
+// פונקציה להמרת טקסט לדיבור דרך ElevenLabs, המרה תקנית עם FFmpeg, והעלאה לשלוחה 1
 async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "1") {
-  const tempFilePath = path.join(__dirname, `temp_tts_${Date.now()}.mp3`);
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // קול Adam הרשמי
+  const rawFilePath = path.join(__dirname, `temp_raw_${Date.now()}.mp3`);
+  const convertedFilePath = path.join(__dirname, `temp_converted_${Date.now()}.mp3`);
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // קול Adam
   
-  console.log(`🎙️ [TTS] מתחיל ייצור שמע באילבן לבס (קול: ${voiceId}), אורך טקסט: ${text.length} תווים...`);
+  console.log(`🎙️ [TTS] מתחיל ייצור שמע באילבן לבס, אורך טקסט: ${text.length} תווים...`);
   
   try {
     const ttsRes = await axios.post(
@@ -117,22 +119,36 @@ async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, tar
       }
     );
 
-    console.log(`✅ [TTS] קובץ MP3 התקבל בהצלחה מאילבן לבס (גודל: ${ttsRes.data.length} בתים). שומר מקומית...`);
-    fs.writeFileSync(tempFilePath, Buffer.from(ttsRes.data));
+    fs.writeFileSync(rawFilePath, Buffer.from(ttsRes.data));
+    console.log(`✅ [TTS] קובץ גולמי התקבל. מבצע המרה לפורמט מותאם לימות המשיח (Mono, 22kHz)...`);
 
-    console.log(`📤 [Yemot] מעלה את הקובץ לשרתי ימות המשיח ישירות לשלוחה ${targetFolder} (000.mp3)...`);
+    // המרת הקובץ בעזרת FFmpeg לפורמט תואם מוחלט לנגן של ימות המשיח
+    await new Promise((resolve, reject) => {
+      ffmpeg(rawFilePath)
+        .audioCodec('libmp3lame')
+        .audioChannels(1) // מונו
+        .audioFrequency(22050) // קצב דגימה תקני
+        .audioBitrate('32k') // קצב סיביות נקי
+        .save(convertedFilePath)
+        .on('end', resolve)
+        .on('error', reject);
+    });
+
+    console.log(`📤 [Yemot] מעלה את הקובץ המומר לשרתי ימות המשיח לשלוחה ${targetFolder} (000.mp3)...`);
     const form = new FormData();
-    form.append("file", fs.createReadStream(tempFilePath));
+    form.append("file", fs.createReadStream(convertedFilePath));
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?token=${token}&path=ivr2:/${targetFolder}/000.mp3`;
 
     const uploadRes = await axios.post(uploadUrl, form, { headers: form.getHeaders(), timeout: 15000 });
     console.log(`📥 [Yemot] תגובת שרת ימות המשיח להעלאה:`, uploadRes.data);
 
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
+    if (fs.existsSync(convertedFilePath)) fs.unlinkSync(convertedFilePath);
     return true;
   } catch (err) {
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    console.error("❌ [Error] שגיאה בתהליך אילבן לבס / ימות המשיח:", err.response?.data?.toString() || err.message);
+    if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
+    if (fs.existsSync(convertedFilePath)) fs.unlinkSync(convertedFilePath);
+    console.error("❌ [Error] שגיאה בתהליך ההמרה / אילבן לבס / ימות המשיח:", err.message || err);
     return false;
   }
 }
@@ -266,7 +282,7 @@ const handleAudioRequest = async (req, res) => {
     const elevenLabsApiKey = parsedElevenLabs.trim();
 
     let audioBuffer = null;
-    // 🔍 סדר חיפוש ההקלטה המעודכן: שלוחה 1 -> שלוחה 2 -> שלוחה 3 ואז שאר האפשרויות
+    // 🔍 סדר חיפוש ההקלטה המדורג: שלוחה 1 -> שלוחה 2 -> שלוחה 3 ואז שאר האפשרויות
     const possiblePaths = [
       `ivr2:/1/last.wav`, 
       `ivr2:/2/last.wav`, 
@@ -659,7 +675,7 @@ const handleAudioRequest = async (req, res) => {
     conversationHistory.set(userPhone, userSession);
 
     // ==========================================
-    // 🎙️ הפעלת ElevenLabs TTS ושמירה ישירות בשלוחה 1
+    // 🎙️ הפעלת ElevenLabs TTS והעלאה לשלוחה 1
     // ==========================================
     if (elevenLabsApiKey) {
       const ttsSuccess = await generateAndUploadElevenLabsTts(finalAnswerText, token, elevenLabsApiKey, "1");
@@ -672,6 +688,7 @@ const handleAudioRequest = async (req, res) => {
     return sendYemotTtsResponse(res, finalAnswerText, targetReturnFolder);
 
   } catch (error) {
+    console.error("❌ [Server Error]:", error);
     return sendYemotTtsResponse(res, "אני מתנצל חלה שגיאה במערכת אנא נסה שנית", "1");
   }
 };
