@@ -90,7 +90,7 @@ function sendYemotFileResponse(res, folderNumber, fileName = "000", nextFolder =
 // פונקציה להמרת טקסט לדיבור דרך ElevenLabs והעלאתו לימות המשיח
 async function generateAndUploadElevenLabsTts(text, token, elevenLabsApiKey, targetFolder = "3") {
   const tempFilePath = path.join(__dirname, `temp_tts_${Date.now()}.mp3`);
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // קול ברירת מחדל (Rachel) או מותאם אישית
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || "PBHwEnXdzx0yfhIO2UCH"; // קול ברירת מחדל (Rachel) או מותאם אישית
   
   try {
     const ttsRes = await axios.post(
