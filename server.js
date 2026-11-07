@@ -1,3 +1,7 @@
+// ==========================================
+// 🚀 קובץ השרת הראשי (גרסת סוכן קולי מאובטח + Supabase)
+// ==========================================
+
 const express = require("express");
 const axios = "axios" in globalThis ? globalThis.axios : require("axios");
 const fs = require("fs");
@@ -14,7 +18,6 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
 const ADMIN_PHONE = "0556755846";
-const bannedPhones = new Set();
 const processedCalls = new Map();
 const conversationHistory = new Map();
 const requestLimits = new Map();
@@ -30,9 +33,11 @@ const checkRateLimit = (phone) => {
   return true;
 };
 
-const blockUserPermanently = (phone) => {
+// חסימת משתמש קבועה במסד הנתונים
+const blockUserPermanently = async (phone) => {
   if (phone === ADMIN_PHONE) return;
-  bannedPhones.add(phone);
+  await supabase.banUser(phone, "חריגה מוגזמת מכללי השימוש");
+  
   if (conversationHistory.has(phone)) {
     const session = conversationHistory.get(phone);
     if (session.timer) clearTimeout(session.timer);
@@ -131,6 +136,12 @@ const handleAudioRequest = async (req, res) => {
     if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר");
     if (!checkRateLimit(userPhone)) return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר");
 
+    // בדיקה האם המשתמש חסום מול מסד הנתונים
+    const isBanned = !isAdminUser && await supabase.isUserBanned(userPhone);
+    if (isBanned) {
+      return sendYemotTtsResponse(res, config.bannedUserResponse);
+    }
+
     const callId = params.ApiCallId || params.ApiYFCallId;
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
@@ -143,10 +154,6 @@ const handleAudioRequest = async (req, res) => {
     if (callId) {
       processedCalls.set(callId, Date.now());
       setTimeout(() => processedCalls.delete(callId), 10000);
-    }
-
-    if (!isAdminUser && bannedPhones.has(userPhone)) {
-      return sendYemotTtsResponse(res, config.bannedUserResponse);
     }
 
     let userSession = conversationHistory.get(userPhone) || { 
@@ -229,7 +236,7 @@ const handleAudioRequest = async (req, res) => {
     const normalizedTranscription = normalizeText(transcribedText);
 
     // ==========================================
-    // 👑 ניהול מצב מנהל (חייב להיות ראשון לפני הכל!)
+    // 👑 ניהול מצב מנהל
     // ==========================================
 
     // 1. יציאה ממצב מנהל
@@ -269,7 +276,7 @@ const handleAudioRequest = async (req, res) => {
       }
     }
 
-    // 4. פעולות מנהל מאומת (כל ההגנות מושבית למנהל פעיל)
+    // 4. פעולות מנהל מאומת
     if (userSession.isAdminAuthenticated) {
       // א. חסימת מספר טלפון
       if (normalizedTranscription.includes("חסום") || normalizedTranscription.includes("תחסום")) {
@@ -279,7 +286,7 @@ const handleAudioRequest = async (req, res) => {
           if (targetPhone === ADMIN_PHONE) {
             return sendYemotTtsResponse(res, "לא ניתן לחסום את מספר המנהל הראשי");
           }
-          bannedPhones.add(targetPhone);
+          await supabase.banUser(targetPhone, "חסימה ידנית על ידי מנהל");
           return sendYemotTtsResponse(res, `המספר ${targetPhone} נחסם בהצלחה מהמערכת`);
         } else {
           return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לחסימה אנא אמור שוב");
@@ -290,11 +297,11 @@ const handleAudioRequest = async (req, res) => {
       if (normalizedTranscription.includes("שחרר") || normalizedTranscription.includes("בטל חסימה") || normalizedTranscription.includes("הסר חסימה")) {
         const phoneMatch = transcribedText.match(/0[2-9]\d{8,9}|05\d{8}/);
         const targetPhone = phoneMatch ? phoneMatch[0] : null;
-        if (targetPhone && bannedPhones.has(targetPhone)) {
-          bannedPhones.delete(targetPhone);
+        if (targetPhone) {
+          await supabase.unbanUser(targetPhone);
           return sendYemotTtsResponse(res, `החסימה עבור המספר ${targetPhone} בוטלה בהצלחה`);
         } else {
-          return sendYemotTtsResponse(res, "המספר לא נמצא ברשימת החסימות או שלא זוהה מספר");
+          return sendYemotTtsResponse(res, "לא זיהיתי מספר טלפון תקין לביטול חסימה");
         }
       }
 
@@ -316,7 +323,7 @@ const handleAudioRequest = async (req, res) => {
         }
       }
 
-      // ד. שליפת 3 שאלות ותשובות לפי 4 ספרות (כולל המרת מילים לספרות אם צריך)
+      // ד. שליפת 3 שאלות ותשובות לפי 4 ספרות
       let digitsOnly = transcribedText.replace(/\D/g, "");
       const wordToNumMap = { "אפס": "0", "אחת": "1", "שתיים": "2", "שלוש": "3", "ארבע": "4", "חמש": "5", "שש": "6", "שבע": "7", "שמונה": "8", "תשע": "9" };
       if (digitsOnly.length === 0) {
@@ -446,7 +453,7 @@ const handleAudioRequest = async (req, res) => {
     if (!isAdminUser && !userSession.isAdminAuthenticated && config.blockedKeywords.some(keyword => normalizedTranscription.includes(keyword))) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
-        blockUserPermanently(userPhone);
+        await blockUserPermanently(userPhone);
         return sendYemotTtsResponse(res, config.bannedUserResponse);
       }
       userSession.lastActive = Date.now();
@@ -570,7 +577,7 @@ const handleAudioRequest = async (req, res) => {
     if (!isAdminUser && !userSession.isAdminAuthenticated && normalizeText(finalAnswerText).includes(config.blockedResponseMarker)) {
       userSession.blockedAttempts += 1;
       if (userSession.blockedAttempts >= 3) {
-        blockUserPermanently(userPhone);
+        await blockUserPermanently(userPhone);
         return sendYemotTtsResponse(res, config.bannedUserResponse);
       }
       conversationHistory.set(userPhone, userSession);
