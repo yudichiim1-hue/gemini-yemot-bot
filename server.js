@@ -1,5 +1,5 @@
 // ==========================================
-// 🚀 קובץ השרת הראשי המלא (Google TTS + היזכרות בשיחות עבר לפי נושא)
+// 🚀 קובץ השרת הראשי המלא (Google TTS לפי טלפון משתמש + היזכרות בשיחות עבר)
 // ==========================================
 
 const express = require("express");
@@ -35,6 +35,15 @@ const RECALL_STOP_WORDS = new Set([
   "לנו", "שיחה", "שיחות", "דיברנו", "על", "בנוגע", "לזה", "מה", "איך", "למה", "מתי",
   "איפה", "מי", "האם", "אפשר", "תגיד", "תזכיר", "לי", "שלי", "היי", "נושא", "קודם", "קודמת"
 ]);
+
+function buildCallerAudioId(phone, callId = "") {
+  const safePhone = String(phone || "caller").replace(/[^\dA-Za-z_-]/g, "") || "caller";
+  const safeCall = String(callId || "")
+    .replace(/[^\dA-Za-z_-]/g, "")
+    .slice(-10);
+  const rand = Math.random().toString(36).slice(2, 6);
+  return safeCall ? `${safePhone}_${safeCall}_${rand}` : `${safePhone}_${Date.now()}_${rand}`;
+}
 
 function isTopicRecallQuestion(text) {
   return /זוכר|דיברנו|היה לנו שיחה|שיחה על|תזכיר לי|בנוגע ל|מה דיברנו/i.test(String(text || ""));
@@ -120,13 +129,14 @@ function convertToYemotWav(inputPath, outputPath) {
   });
 }
 
-async function generateAndUploadGoogleTts(text, token, targetFolder = "1") {
+async function generateAndUploadGoogleTts(text, token, fileBaseName, targetFolder = "1") {
   const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const rawFilePath = path.join(__dirname, `temp_raw_${uniqueId}.mp3`);
-  const convertedFilePath = path.join(__dirname, `temp_converted_${uniqueId}.wav`);
+  const rawFilePath = path.join(__dirname, `temp_raw_${fileBaseName}_${uniqueId}.mp3`);
+  const convertedFilePath = path.join(__dirname, `temp_converted_${fileBaseName}_${uniqueId}.wav`);
+  const remoteFileName = `${fileBaseName}.wav`;
 
   const safeText = String(text || "").trim();
-  console.log(`🎙️ [Google-TTS] מתחיל ייצור שמע בעברית, אורך טקסט: ${safeText.length} תווים...`);
+  console.log(`🎙️ [Google-TTS] מייצר שמע עבור ${remoteFileName}, אורך טקסט: ${safeText.length} תווים...`);
 
   try {
     const googleTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(safeText)}&tl=he&client=tw-ob`;
@@ -151,11 +161,11 @@ async function generateAndUploadGoogleTts(text, token, targetFolder = "1") {
 
     const form = new FormData();
     form.append("file", fs.createReadStream(convertedFilePath), {
-      filename: "000.wav",
+      filename: remoteFileName,
       contentType: "audio/wav"
     });
 
-    const uploadPath = `ivr2:/${targetFolder}/000.wav`;
+    const uploadPath = `ivr2:/${targetFolder}/${remoteFileName}`;
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?${new URLSearchParams({
       token: String(token),
       path: uploadPath
@@ -176,6 +186,7 @@ async function generateAndUploadGoogleTts(text, token, targetFolder = "1") {
       throw new Error(`Yemot did not confirm the uploaded file: ${JSON.stringify(uploadRes.data)}`);
     }
 
+    console.log(`✅ [Yemot] קובץ ${remoteFileName} הועלה בהצלחה ל-${uploadPath}`);
     return true;
   } catch (err) {
     console.error("❌ [Google-TTS] שגיאה ביצירה / המרה / העלאה:", err.message || err);
@@ -196,10 +207,11 @@ const callGeminiSimple = async (model, payload, geminiApiKey) => {
   return axios.post(geminiUrl, payload, { headers: { "Content-Type": "application/json" }, timeout: 12000 });
 };
 
-async function downloadAndUploadToYemot(targetInput, token, targetFolder = "1") {
+async function downloadAndUploadToYemot(targetInput, token, fileBaseName, targetFolder = "1") {
   const uniqueId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const tempMp3Path = path.join(__dirname, `temp_song_${uniqueId}.mp3`);
-  const tempWavPath = path.join(__dirname, `temp_song_${uniqueId}.wav`);
+  const tempMp3Path = path.join(__dirname, `temp_song_${fileBaseName}_${uniqueId}.mp3`);
+  const tempWavPath = path.join(__dirname, `temp_song_${fileBaseName}_${uniqueId}.wav`);
+  const remoteFileName = `${fileBaseName}.wav`;
 
   try {
     let videoUrl = targetInput;
@@ -245,11 +257,11 @@ async function downloadAndUploadToYemot(targetInput, token, targetFolder = "1") 
 
     const form = new FormData();
     form.append("file", fs.createReadStream(tempWavPath), {
-      filename: "000.wav",
+      filename: remoteFileName,
       contentType: "audio/wav"
     });
 
-    const uploadPath = `ivr2:/${targetFolder}/000.wav`;
+    const uploadPath = `ivr2:/${targetFolder}/${remoteFileName}`;
     const uploadUrl = `https://www.call2all.co.il/ym/api/UploadFile?${new URLSearchParams({
       token: String(token),
       path: uploadPath
@@ -288,6 +300,7 @@ const handleAudioRequest = async (req, res) => {
     const userPhone = params.ApiPhone || params.phone || "default_user";
     const isAdminUser = userPhone === ADMIN_PHONE;
     const targetReturnFolder = "1";
+    const audioTargetFolder = process.env.TARGET_AUDIO_FOLDER || "1";
 
     if (!token) return sendYemotTtsResponse(res, "שגיאת אימות טוקן חסר", targetReturnFolder);
     if (!checkRateLimit(userPhone)) return sendYemotTtsResponse(res, "חרגת ממספר הפניות המותר", targetReturnFolder);
@@ -301,6 +314,7 @@ const handleAudioRequest = async (req, res) => {
     const secondaryFolder = params.SHL || "1";
     const primaryFolder = params.SHM || "2";
     const requestedModel = params.MODEL || params.model;
+    const callerAudioId = buildCallerAudioId(userPhone, callId);
 
     if (callId && processedCalls.has(callId)) {
       res.set("Content-Type", "text/plain; charset=utf-8");
@@ -418,7 +432,7 @@ const handleAudioRequest = async (req, res) => {
       );
     }
 
-    console.log(`🗣️ [STT] טקסט מתומלל: "${transcribedText}"`);
+    console.log(`🗣️ [STT] טקסט מתומלל עבור ${userPhone}: "${transcribedText}"`);
     const normalizedTranscription = normalizeText(transcribedText);
 
     if (userSession.isAdminAuthenticated && config.adminLogoutTriggers.some((t) => normalizedTranscription.includes(t))) {
@@ -501,14 +515,18 @@ const handleAudioRequest = async (req, res) => {
 
     if (isRecallRequested) {
       const keywords = extractTopicKeywords(transcribedText);
-      const matchedRows = await supabase.searchConversationsByTopic(userPhone, keywords, 14, 5);
+      const matchedRows = typeof supabase.searchConversationsByTopic === "function"
+        ? await supabase.searchConversationsByTopic(userPhone, keywords, 14, 5)
+        : [];
       previousContext = {
         isTopicRecall: true,
         matchedRows
       };
     } else if (isSummaryRequested) {
       try {
-        const recentLogs = await supabase.getRecentConversations(userPhone, 7, 25);
+        const recentLogs = typeof supabase.getRecentConversations === "function"
+          ? await supabase.getRecentConversations(userPhone, 7, 25)
+          : await supabase.getAllConversationsForToday(userPhone);
         if (recentLogs && recentLogs.length > 0) {
           const formattedHistory = recentLogs.map((l) => `שאלה: "${l.question}" | תשובה: "${l.answer}"`).join("\n");
           previousContext = { isFullSummary: true, summaryText: formattedHistory };
@@ -623,8 +641,10 @@ const handleAudioRequest = async (req, res) => {
 
     if (finalAnswerText.includes("PLAY_SONG:")) {
       const songTarget = finalAnswerText.split("PLAY_SONG:")[1].trim();
-      const success = await downloadAndUploadToYemot(songTarget, token, "1");
-      return success ? sendYemotFileResponse(res, "1", "000", targetReturnFolder) : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער", targetReturnFolder);
+      const success = await downloadAndUploadToYemot(songTarget, token, callerAudioId, audioTargetFolder);
+      return success
+        ? sendYemotFileResponse(res, audioTargetFolder, callerAudioId, targetReturnFolder)
+        : sendYemotTtsResponse(res, "אני לא הצלחתי להוריד את השיר מצטער", targetReturnFolder);
     }
 
     userSession.history.push({ role: "user", content: transcribedText });
@@ -632,9 +652,9 @@ const handleAudioRequest = async (req, res) => {
     if (userSession.history.length > 6) userSession.history = userSession.history.slice(-6);
     conversationHistory.set(userPhone, userSession);
 
-    const ttsSuccess = await generateAndUploadGoogleTts(finalAnswerText, token, "1");
+    const ttsSuccess = await generateAndUploadGoogleTts(finalAnswerText, token, callerAudioId, audioTargetFolder);
     if (ttsSuccess) {
-      return sendYemotFileResponse(res, "1", "000", targetReturnFolder);
+      return sendYemotFileResponse(res, audioTargetFolder, callerAudioId, targetReturnFolder);
     }
 
     return sendYemotTtsResponse(res, finalAnswerText, targetReturnFolder);
