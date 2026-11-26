@@ -10,10 +10,21 @@ module.exports = {
     if (userCity) userInfoIntro += ` הוא נמצא או גר בעיר ${userCity}. התאם תשובות כמו מזג אוויר ופקקים לעיר זו.`;
 
     let contextReminderHebrew = "";
-    if (previousContext && previousContext.isFullSummary) {
-      contextReminderHebrew = `\nמידע רקע מקיף:${userInfoIntro} המשתמש ביקש סיכום או ניתוח אישי של השיחות מהיום:\n${previousContext.summaryText}\n\nהנחיה: נתח את השיחות בצורה ידידותית וחכמה בלי לומר לעולם שאתה לא שומר מידע.`;
+    if (previousContext && previousContext.isTopicRecall) {
+      const matchesText = (previousContext.matchedRows || [])
+        .map((r, i) => {
+          const when = r.created_at
+            ? new Date(r.created_at).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" })
+            : "מועד לא ידוע";
+          return `${i + 1}. [${when}] שאלה: "${r.question || ""}" | תשובה: "${r.answer || ""}"`;
+        })
+        .join("\n");
+
+      contextReminderHebrew = `\nהמשתמש מחפש שיחה קודמת מההיסטוריה שלו.${userInfoIntro}\nשיחות תואמות שנמצאו:\n${matchesText || "לא נמצאו שיחות תואמות"}\n\nהנחיה מיוחדת להיזכרות בשיחה: אם נמצאה שיחה רלוונטית, ציין בקצרה ובטבעיות שמצאת אותה ומה עלה בה, ושאל ישירות מה הוא רוצה בנוגע לזה (למשל: מה תרצה בנוגע לזה). אם לא נמצאה שיחה תואמת, אמור בכנות שלא מצאת שיחה כזו ושאל על מה תרצה לדבר.`;
+    } else if (previousContext && previousContext.isFullSummary) {
+      contextReminderHebrew = `\nמידע רקע מקיף:${userInfoIntro} המשתמש ביקש סיכום או ניתוח אישי של השיחות:\n${previousContext.summaryText}\n\nהנחיה: נתח את השיחות בצורה ידידותית וחכמה בלי לומר לעולם שאתה לא שומר מידע.`;
     } else if (previousContext) {
-      contextReminderHebrew = `\nמידע רקע מהשיחה הקודמת היום:${userInfoIntro} שאל: "${previousContext.question}" | ענית: "${previousContext.answer}".`;
+      contextReminderHebrew = `\nמידע רקע מהשיחה הקודמת:${userInfoIntro} שאל: "${previousContext.question}" | ענית: "${previousContext.answer}".`;
     } else if (userInfoIntro) {
       contextReminderHebrew = `\nמידע רקע:${userInfoIntro}`;
     }
